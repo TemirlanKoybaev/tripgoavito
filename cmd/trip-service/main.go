@@ -9,7 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/handler"
 	"github.com/joho/godotenv"
 )
 
@@ -23,8 +25,10 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 
+	h := handler.New()
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
+		Handler:           api.Handler(h),
 		ReadTimeout:       5 * time.Second,
 		ReadHeaderTimeout: 2 * time.Second,
 		WriteTimeout:      10 * time.Second,
