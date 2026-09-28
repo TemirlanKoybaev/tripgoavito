@@ -11,6 +11,7 @@ import (
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/db"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/handler"
 	"github.com/joho/godotenv"
 )
@@ -25,7 +26,24 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 
-	h := handler.New()
+	ctx := context.Background()
+
+	pool, err := db.Connect(
+		ctx,
+		cfg.DatabaseURL,
+		cfg.DatabaseMaxConns,
+		cfg.DatabaseMinConns,
+		cfg.DatabaseMaxConnLifetime,
+		cfg.DatabaseConnectTimeout,
+	)
+	if err != nil {
+		log.Fatalf("db error: %v", err)
+	}
+	defer pool.Close()
+
+	log.Println("connected to database")
+
+	h := handler.New(pool)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           api.Handler(h),
