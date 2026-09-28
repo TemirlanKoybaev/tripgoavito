@@ -47,10 +47,6 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(api.HealthResponse{Status: api.Ok})
 }
 
-func (h *Handler) GetTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
 func (h *Handler) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
