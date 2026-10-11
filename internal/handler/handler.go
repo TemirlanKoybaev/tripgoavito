@@ -21,7 +21,7 @@ type Handler struct {
 	queryTimeout time.Duration
 	tripRepo     *repository.TripRepository
 	histRepo     *repository.StatusHistoryRepository
-	txManager    *tx.TxManager
+	txManager    tx.TxManager
 }
 
 func New(pool *pgxpool.Pool, queryTimeout time.Duration) *Handler {

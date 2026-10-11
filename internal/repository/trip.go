@@ -49,11 +49,7 @@ func (r *TripRepository) Create(ctx context.Context, trip *model.Trip) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	if t := tx.GetExecutor(ctx, r.pool); t != nil {
-		_, err = t.Exec(ctx, query, args...)
-	} else {
-		_, err = r.pool.Exec(ctx, query, args...)
-	}
+	_, err = tx.GetExecutor(ctx, r.pool).Exec(ctx, query, args...)
 
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation && pgErr.ConstraintName == driverActiveIndex {
@@ -80,14 +76,7 @@ func (r *TripRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Trip
 	defer cancel()
 
 	var trip model.Trip
-	var row pgx.Row
-	if t := tx.GetExecutor(ctx, r.pool); t != nil {
-		row = t.QueryRow(ctx, query, args...)
-	} else {
-		row = r.pool.QueryRow(ctx, query, args...)
-	}
-
-	err = row.Scan(
+	err = tx.GetExecutor(ctx, r.pool).QueryRow(ctx, query, args...).Scan(
 		&trip.ID, &trip.UserID, &trip.DriverID,
 		&trip.StartLatitude, &trip.StartLongitude,
 		&trip.EndLatitude, &trip.EndLongitude,
@@ -97,7 +86,7 @@ func (r *TripRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Trip
 		return nil, model.ErrTripNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("scan: %w", err)
+		return nil, fmt.Errorf("get trip: %w", err)
 	}
 	return &trip, nil
 }
@@ -116,19 +105,9 @@ func (r *TripRepository) Finish(ctx context.Context, id uuid.UUID, finishedAt ti
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	var rowsAffected int64
-	if t := tx.GetExecutor(ctx, r.pool); t != nil {
-		result, err := t.Exec(ctx, query, args...)
-		if err != nil {
-			return 0, err
-		}
-		rowsAffected = result.RowsAffected()
-	} else {
-		result, err := r.pool.Exec(ctx, query, args...)
-		if err != nil {
-			return 0, err
-		}
-		rowsAffected = result.RowsAffected()
+	result, err := tx.GetExecutor(ctx, r.pool).Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("finish trip: %w", err)
 	}
-	return rowsAffected, nil
+	return result.RowsAffected(), nil
 }

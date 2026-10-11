@@ -31,12 +31,7 @@ func (r *StatusHistoryRepository) Create(ctx context.Context, tripID uuid.UUID, 
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	if t := tx.GetExecutor(ctx, r.pool); t != nil {
-		_, err = t.Exec(ctx, query, args...)
-	} else {
-		_, err = r.pool.Exec(ctx, query, args...)
-	}
-	if err != nil {
+	if _, err := tx.GetExecutor(ctx, r.pool).Exec(ctx, query, args...); err != nil {
 		return fmt.Errorf("insert status history: %w", err)
 	}
 	return nil
