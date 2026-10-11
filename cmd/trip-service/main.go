@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
@@ -49,10 +48,10 @@ func main() {
 		Handler: api.HandlerWithOptions(h, api.ChiServerOptions{
 			ErrorHandlerFunc: handler.ParamErrorHandler,
 		}),
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 2 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadTimeout:       cfg.HTTPReadTimeout,
+		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
+		WriteTimeout:      cfg.HTTPWriteTimeout,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
 
 	go func() {
