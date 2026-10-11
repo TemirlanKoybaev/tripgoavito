@@ -6,6 +6,11 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	StatusActive    = "active"
+	StatusCompleted = "completed"
+)
+
 type Trip struct {
 	ID             uuid.UUID
 	UserID         uuid.UUID
