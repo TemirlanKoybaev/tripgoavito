@@ -54,11 +54,3 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(api.HealthResponse{Status: api.Ok})
 }
-
-func (h *Handler) ListTripPositions(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-func (h *Handler) CreateTripPosition(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
