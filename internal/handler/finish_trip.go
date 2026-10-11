@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
-	"github.com/jackc/pgx/v5"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/model"
 )
 
 func (h *Handler) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
@@ -31,7 +31,7 @@ func (h *Handler) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.
 	if rowsAffected == 0 {
 		trip, err := h.tripRepo.GetByID(r.Context(), tripId)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, model.ErrTripNotFound) {
 				writeProblem(w, http.StatusNotFound, "trip_not_found", "Trip not found", r.URL.Path)
 				return
 			}

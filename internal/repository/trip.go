@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,7 +11,13 @@ import (
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/tx"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	pgUniqueViolation = "23505"
+	driverActiveIndex = "trips_driver_active_idx"
 )
 
 var psql = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
@@ -43,7 +50,15 @@ func (r *TripRepository) Create(ctx context.Context, trip *model.Trip) error {
 	} else {
 		_, err = r.pool.Exec(ctx, query, args...)
 	}
-	return err
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation && pgErr.ConstraintName == driverActiveIndex {
+		return model.ErrDriverBusy
+	}
+	if err != nil {
+		return fmt.Errorf("insert trip: %w", err)
+	}
+	return nil
 }
 
 func (r *TripRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Trip, error) {
@@ -71,6 +86,9 @@ func (r *TripRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Trip
 		&trip.EndLatitude, &trip.EndLongitude,
 		&trip.Price, &trip.Status, &trip.StartedAt, &trip.FinishedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, model.ErrTripNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}

@@ -11,7 +11,6 @@ import (
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/model"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.CreateTripParams) {
@@ -50,8 +49,7 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.
 		}
 		return h.histRepo.Create(ctx, trip.ID, nil, "active")
 	}); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if errors.Is(err, model.ErrDriverBusy) {
 			writeProblem(w, http.StatusConflict, "driver_busy", "Driver already has an active trip", r.URL.Path)
 			return
 		}
