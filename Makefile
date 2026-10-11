@@ -1,8 +1,11 @@
-include .env
+-include .env
+
+.PHONY: generate migrate migrate-down run test
 
 generate:
 	go tool oapi-codegen \
 		-generate types,chi-server \
+		-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
 		-package api \
 		-o api/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml
@@ -15,3 +18,6 @@ migrate-down:
 
 run:
 	go run ./cmd/trip-service
+
+test:
+	go test ./...
