@@ -88,6 +88,12 @@ func (r *TripRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Trip
 	if err != nil {
 		return nil, fmt.Errorf("get trip: %w", err)
 	}
+
+	trip.StartedAt = trip.StartedAt.UTC()
+	if trip.FinishedAt != nil {
+		finishedAt := trip.FinishedAt.UTC()
+		trip.FinishedAt = &finishedAt
+	}
 	return &trip, nil
 }
 
@@ -95,7 +101,7 @@ func (r *TripRepository) Finish(ctx context.Context, id uuid.UUID, finishedAt ti
 	query, args, err := psql.Update("trips").
 		Set("status", model.StatusCompleted).
 		Set("finished_at", finishedAt).
-		Set("updated_at", time.Now()).
+		Set("updated_at", finishedAt).
 		Where(sq.And{sq.Eq{"id": id}, sq.Eq{"status": model.StatusActive}}).
 		ToSql()
 	if err != nil {

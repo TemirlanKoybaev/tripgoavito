@@ -30,7 +30,7 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.
 		EndLongitude:   body.EndPoint.Longitude,
 		Price:          body.Price,
 		Status:         model.StatusActive,
-		StartedAt:      time.Now(),
+		StartedAt:      time.Now().UTC().Truncate(time.Microsecond),
 	}
 
 	err = h.txManager.Do(r.Context(), func(ctx context.Context) error {

@@ -17,7 +17,7 @@ func (h *Handler) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.
 	var trip *model.Trip
 
 	err := h.txManager.Do(r.Context(), func(ctx context.Context) error {
-		n, err := h.tripRepo.Finish(ctx, tripId, time.Now())
+		n, err := h.tripRepo.Finish(ctx, tripId, time.Now().UTC().Truncate(time.Microsecond))
 		if err != nil {
 			return err
 		}
