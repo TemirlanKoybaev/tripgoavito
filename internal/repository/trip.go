@@ -23,11 +23,12 @@ const (
 var psql = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 
 type TripRepository struct {
-	pool *pgxpool.Pool
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewTripRepository(pool *pgxpool.Pool) *TripRepository {
-	return &TripRepository{pool: pool}
+func NewTripRepository(pool *pgxpool.Pool, queryTimeout time.Duration) *TripRepository {
+	return &TripRepository{pool: pool, queryTimeout: queryTimeout}
 }
 
 func (r *TripRepository) Create(ctx context.Context, trip *model.Trip) error {
@@ -44,6 +45,9 @@ func (r *TripRepository) Create(ctx context.Context, trip *model.Trip) error {
 	if err != nil {
 		return fmt.Errorf("build query: %w", err)
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
 
 	if t := tx.GetExecutor(ctx, r.pool); t != nil {
 		_, err = t.Exec(ctx, query, args...)
@@ -72,6 +76,9 @@ func (r *TripRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Trip
 		return nil, fmt.Errorf("build query: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
 	var trip model.Trip
 	var row pgx.Row
 	if t := tx.GetExecutor(ctx, r.pool); t != nil {
@@ -97,14 +104,17 @@ func (r *TripRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Trip
 
 func (r *TripRepository) Finish(ctx context.Context, id uuid.UUID, finishedAt time.Time) (int64, error) {
 	query, args, err := psql.Update("trips").
-		Set("status", "completed").
+		Set("status", model.StatusCompleted).
 		Set("finished_at", finishedAt).
 		Set("updated_at", time.Now()).
-		Where(sq.And{sq.Eq{"id": id}, sq.Eq{"status": "active"}}).
+		Where(sq.And{sq.Eq{"id": id}, sq.Eq{"status": model.StatusActive}}).
 		ToSql()
 	if err != nil {
 		return 0, fmt.Errorf("build query: %w", err)
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
 
 	var rowsAffected int64
 	if t := tx.GetExecutor(ctx, r.pool); t != nil {

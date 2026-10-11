@@ -43,10 +43,12 @@ func main() {
 
 	log.Println("connected to database")
 
-	h := handler.New(pool)
+	h := handler.New(pool, cfg.DatabaseQueryTimeout)
 	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           api.Handler(h),
+		Addr: cfg.HTTPAddr,
+		Handler: api.HandlerWithOptions(h, api.ChiServerOptions{
+			ErrorHandlerFunc: handler.ParamErrorHandler,
+		}),
 		ReadTimeout:       5 * time.Second,
 		ReadHeaderTimeout: 2 * time.Second,
 		WriteTimeout:      10 * time.Second,
