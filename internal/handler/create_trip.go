@@ -14,19 +14,9 @@ import (
 )
 
 func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.CreateTripParams) {
-	var body api.TripData
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeProblem(w, http.StatusBadRequest, "invalid_request", "Invalid request body", r.URL.Path)
-		return
-	}
-
-	if body.UserId == uuid.Nil || body.DriverId == uuid.Nil {
-		writeProblem(w, http.StatusBadRequest, "invalid_request", "user_id and driver_id are required", r.URL.Path)
-		return
-	}
-
-	if body.Price < 0 {
-		writeProblem(w, http.StatusBadRequest, "invalid_request", "price must be >= 0", r.URL.Path)
+	body, err := decodeTripData(w, r)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "invalid_request", err.Error(), r.URL.Path)
 		return
 	}
 
@@ -39,16 +29,17 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.
 		EndLatitude:    body.EndPoint.Latitude,
 		EndLongitude:   body.EndPoint.Longitude,
 		Price:          body.Price,
-		Status:         "active",
+		Status:         model.StatusActive,
 		StartedAt:      time.Now(),
 	}
 
-	if err := h.txManager.Do(r.Context(), func(ctx context.Context) error {
+	err = h.txManager.Do(r.Context(), func(ctx context.Context) error {
 		if err := h.tripRepo.Create(ctx, trip); err != nil {
 			return err
 		}
-		return h.histRepo.Create(ctx, trip.ID, nil, "active")
-	}); err != nil {
+		return h.histRepo.Create(ctx, trip.ID, nil, model.StatusActive)
+	})
+	if err != nil {
 		if errors.Is(err, model.ErrDriverBusy) {
 			writeProblem(w, http.StatusConflict, "driver_busy", "Driver already has an active trip", r.URL.Path)
 			return
