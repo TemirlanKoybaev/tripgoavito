@@ -16,6 +16,7 @@ import (
 	createhttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/create"
 	finishhttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/finish"
 	gethttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/get"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/logger"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres/transaction"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/telemetry"
@@ -35,6 +36,7 @@ type Container struct {
 }
 
 func New(ctx context.Context, cfg *config.Config) (*Container, error) {
+	lg := logger.New(cfg.LogLevel)
 	shutdownTelemetry, err := telemetry.Setup(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("setup telemetry: %w", err)
@@ -63,7 +65,9 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
 	handler := router.New(createHandler, getHandler, finishHandler, healthHandler).Handler()
+	handler = middleware.Logging(lg)(handler)
 	handler = middleware.Tracing(handler)
+	handler = middleware.Recover(lg)(handler)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
