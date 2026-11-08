@@ -2,6 +2,7 @@ package create
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,10 +24,12 @@ type UseCase struct {
 	trips   tripRepository
 	history historyRepository
 	tx      txManager
+	metrics tripMetrics
+	log     *slog.Logger
 }
 
-func New(trips tripRepository, history historyRepository, tx txManager) *UseCase {
-	return &UseCase{trips: trips, history: history, tx: tx}
+func New(trips tripRepository, history historyRepository, tx txManager, metrics tripMetrics, log *slog.Logger) *UseCase {
+	return &UseCase{trips: trips, history: history, tx: tx, metrics: metrics, log: log}
 }
 
 func (u *UseCase) Create(ctx context.Context, in Input) (*trip.Trip, error) {
@@ -52,5 +55,9 @@ func (u *UseCase) Create(ctx context.Context, in Input) (*trip.Trip, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Счётчик и лог только после commit: откатанная поездка не считается созданной.
+	u.metrics.TripCreated(ctx)
+	u.log.InfoContext(ctx, "trip created", slog.String("trip_id", t.ID.String()))
 	return t, nil
 }

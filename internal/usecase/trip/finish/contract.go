@@ -20,6 +20,10 @@ type (
 		Create(ctx context.Context, tripID uuid.UUID, from *string, to string) error
 	}
 
+	tripMetrics interface {
+		TripCompleted(ctx context.Context)
+	}
+
 	txManager interface {
 		Do(ctx context.Context, fn func(ctx context.Context) error) error
 	}

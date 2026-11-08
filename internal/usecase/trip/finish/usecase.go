@@ -2,6 +2,7 @@ package finish
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,10 +14,12 @@ type UseCase struct {
 	trips   tripRepository
 	history historyRepository
 	tx      txManager
+	metrics tripMetrics
+	log     *slog.Logger
 }
 
-func New(trips tripRepository, history historyRepository, tx txManager) *UseCase {
-	return &UseCase{trips: trips, history: history, tx: tx}
+func New(trips tripRepository, history historyRepository, tx txManager, metrics tripMetrics, log *slog.Logger) *UseCase {
+	return &UseCase{trips: trips, history: history, tx: tx, metrics: metrics, log: log}
 }
 
 func (u *UseCase) Finish(ctx context.Context, id uuid.UUID) (*trip.Trip, error) {
@@ -47,5 +50,9 @@ func (u *UseCase) Finish(ctx context.Context, id uuid.UUID) (*trip.Trip, error) 
 	if err != nil {
 		return nil, err
 	}
+
+	// Счётчик и лог только после commit: откатанное завершение не считается.
+	u.metrics.TripCompleted(ctx)
+	u.log.InfoContext(ctx, "trip completed", slog.String("trip_id", result.ID.String()))
 	return result, nil
 }

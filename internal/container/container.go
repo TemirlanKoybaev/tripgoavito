@@ -60,9 +60,9 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 	trips := triprepo.New(pool, cfg.DatabaseQueryTimeout)
 	history := historyrepo.New(pool, cfg.DatabaseQueryTimeout)
 
-	createHandler := createhttp.New(createuc.New(trips, history, txManager))
+	createHandler := createhttp.New(createuc.New(trips, history, txManager, metrics, lg))
 	getHandler := gethttp.New(getuc.New(trips))
-	finishHandler := finishhttp.New(finishuc.New(trips, history, txManager))
+	finishHandler := finishhttp.New(finishuc.New(trips, history, txManager, metrics, lg))
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
 	handler := router.New(createHandler, getHandler, finishHandler, healthHandler).Handler()
