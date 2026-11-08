@@ -3,11 +3,12 @@ package container
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/health"
@@ -16,7 +17,6 @@ import (
 	createhttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/create"
 	finishhttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/finish"
 	gethttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/get"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/logger"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres/transaction"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/telemetry"
@@ -33,10 +33,16 @@ type Container struct {
 	Server            *http.Server
 	pool              *pgxpool.Pool
 	shutdownTelemetry func(context.Context) error
+	log               *slog.Logger
 }
 
-func New(ctx context.Context, cfg *config.Config) (*Container, error) {
-	lg := logger.New(cfg.LogLevel, cfg.ServiceName)
+func New(ctx context.Context, cfg *config.Config, lg *slog.Logger) (*Container, error) {
+	// Ошибки самого OTel SDK (коллектор недоступен и т. п.) идут в наш лог, а не в стандартный.
+	// Warn, а не Error: сервис без телеметрии продолжает работать.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		lg.Warn("telemetry error", slog.Any("error", err))
+	}))
+
 	metrics, shutdownTelemetry, err := telemetry.Setup(ctx, cfg.ServiceVersion)
 	if err != nil {
 		return nil, fmt.Errorf("setup telemetry: %w", err)
@@ -52,17 +58,17 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 		metrics,
 	)
 	if err != nil {
-		flushTelemetry(shutdownTelemetry)
+		flushTelemetry(lg, shutdownTelemetry)
 		return nil, fmt.Errorf("connect db: %w", err)
 	}
 
-	txManager := transaction.New(pool)
+	txManager := transaction.New(pool, lg)
 	trips := triprepo.New(pool, cfg.DatabaseQueryTimeout)
 	history := historyrepo.New(pool, cfg.DatabaseQueryTimeout)
 
 	if err := metrics.RegisterActiveTrips(trips); err != nil {
 		pool.Close()
-		flushTelemetry(shutdownTelemetry)
+		flushTelemetry(lg, shutdownTelemetry)
 		return nil, fmt.Errorf("register active trips gauge: %w", err)
 	}
 
@@ -86,19 +92,19 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
 
-	return &Container{Server: server, pool: pool, shutdownTelemetry: shutdownTelemetry}, nil
+	return &Container{Server: server, pool: pool, shutdownTelemetry: shutdownTelemetry, log: lg}, nil
 }
 
 func (c *Container) Close() {
 	c.pool.Close()
-	flushTelemetry(c.shutdownTelemetry)
+	flushTelemetry(c.log, c.shutdownTelemetry)
 }
 
-func flushTelemetry(shutdown func(context.Context) error) {
+func flushTelemetry(lg *slog.Logger, shutdown func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
 	defer cancel()
 
 	if err := shutdown(ctx); err != nil {
-		log.Printf("shutdown telemetry: %v", err)
+		lg.Error("shutdown telemetry", slog.Any("error", err))
 	}
 }

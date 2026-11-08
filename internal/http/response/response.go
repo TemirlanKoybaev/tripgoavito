@@ -2,18 +2,18 @@ package response
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/domainerror"
 )
 
-func JSON(w http.ResponseWriter, status int, body any) {
+func JSON(w http.ResponseWriter, r *http.Request, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Printf("write response: %v", err)
+		domainerror.Record(r.Context(), err)
 	}
 }
 

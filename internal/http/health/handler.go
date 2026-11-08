@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/domainerror"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/response"
 )
 
@@ -22,8 +23,8 @@ func New(p pinger, timeout time.Duration) *Handler {
 	return &Handler{pinger: p, timeout: timeout}
 }
 
-func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
-	response.JSON(w, http.StatusOK, api.HealthResponse{Status: api.Ok})
+func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+	response.JSON(w, r, http.StatusOK, api.HealthResponse{Status: api.Ok})
 }
 
 func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
@@ -31,8 +32,9 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := h.pinger.Ping(ctx); err != nil {
-		response.JSON(w, http.StatusServiceUnavailable, api.HealthResponse{Status: api.Unavailable})
+		domainerror.Record(r.Context(), err)
+		response.JSON(w, r, http.StatusServiceUnavailable, api.HealthResponse{Status: api.Unavailable})
 		return
 	}
-	response.JSON(w, http.StatusOK, api.HealthResponse{Status: api.Ok})
+	response.JSON(w, r, http.StatusOK, api.HealthResponse{Status: api.Ok})
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -26,10 +26,11 @@ type DBTX interface {
 
 type pgManager struct {
 	pool *pgxpool.Pool
+	log  *slog.Logger
 }
 
-func New(pool *pgxpool.Pool) TxManager {
-	return &pgManager{pool: pool}
+func New(pool *pgxpool.Pool, log *slog.Logger) TxManager {
+	return &pgManager{pool: pool, log: log}
 }
 
 func (m *pgManager) Do(ctx context.Context, fn func(ctx context.Context) error) error {
@@ -46,7 +47,7 @@ func (m *pgManager) Do(ctx context.Context, fn func(ctx context.Context) error) 
 
 	defer func() {
 		if p := recover(); p != nil {
-			rollback(ctx, transaction)
+			m.rollback(ctx, transaction)
 			panic(p)
 		}
 	}()
@@ -54,7 +55,7 @@ func (m *pgManager) Do(ctx context.Context, fn func(ctx context.Context) error) 
 	ctx = context.WithValue(ctx, contextKey{}, transaction)
 
 	if err := fn(ctx); err != nil {
-		rollback(ctx, transaction)
+		m.rollback(ctx, transaction)
 		return err
 	}
 
@@ -65,12 +66,12 @@ func (m *pgManager) Do(ctx context.Context, fn func(ctx context.Context) error) 
 	return nil
 }
 
-func rollback(ctx context.Context, t pgx.Tx) {
+func (m *pgManager) rollback(ctx context.Context, t pgx.Tx) {
 	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 
 	if err := t.Rollback(rbCtx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-		log.Printf("rollback: %v", err)
+		m.log.ErrorContext(ctx, "rollback failed", slog.Any("error", err))
 	}
 }
 

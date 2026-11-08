@@ -23,5 +23,5 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, tripID api.Trip
 		return
 	}
 
-	response.JSON(w, http.StatusOK, response.Trip(t))
+	response.JSON(w, r, http.StatusOK, response.Trip(t))
 }

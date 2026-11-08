@@ -39,5 +39,5 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, _ api.CreateTri
 	}
 
 	w.Header().Set("Location", "/api/v1/trips/"+t.ID.String())
-	response.JSON(w, http.StatusCreated, response.Trip(t))
+	response.JSON(w, r, http.StatusCreated, response.Trip(t))
 }

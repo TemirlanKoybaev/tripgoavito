@@ -2,14 +2,15 @@ package domainerror
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 )
 
+// Write отвечает клиенту problem+json. Настоящая причина 5xx и сбой записи
+// ответа не логируются здесь, а попадают в слот и уходят в «request handled».
 func Write(w http.ResponseWriter, r *http.Request, err error) {
 	status, problem := Problem(err)
 	if status == http.StatusInternalServerError {
-		log.Printf("internal error: %v", err)
+		Record(r.Context(), err)
 	}
 
 	instance := r.URL.Path
@@ -18,6 +19,6 @@ func Write(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	if encErr := json.NewEncoder(w).Encode(problem); encErr != nil {
-		log.Printf("write problem response: %v", encErr)
+		Record(r.Context(), encErr)
 	}
 }

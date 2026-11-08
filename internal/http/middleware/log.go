@@ -28,6 +28,8 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
+			ctx, errSlot := domainerror.WithSlot(r.Context())
+			r = r.WithContext(ctx)
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			panicked := true
 
@@ -37,17 +39,26 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 					status = http.StatusInternalServerError
 				}
 
+				// Error только для 5xx. Сбой записи ответа при статусе ниже 500 — Warn.
 				level := slog.LevelInfo
-				if status >= http.StatusInternalServerError {
+				reqErr := errSlot.Err()
+				switch {
+				case status >= http.StatusInternalServerError:
 					level = slog.LevelError
+				case reqErr != nil:
+					level = slog.LevelWarn
 				}
 
-				logger.LogAttrs(r.Context(), level, "request handled",
+				attrs := []slog.Attr{
 					slog.String("method", r.Method),
 					slog.String("route", Route(r.Context())),
 					slog.Int("status", status),
 					slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
-				)
+				}
+				if reqErr != nil {
+					attrs = append(attrs, slog.String("error", reqErr.Error()))
+				}
+				logger.LogAttrs(r.Context(), level, "request handled", attrs...)
 			}()
 
 			next.ServeHTTP(rec, r)

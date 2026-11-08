@@ -5,6 +5,8 @@ package trip_test
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -46,7 +48,7 @@ func newEnv(t *testing.T) *env {
 		pool:    pool,
 		trips:   triprepo.New(pool, queryTimeout),
 		history: historyrepo.New(pool, queryTimeout),
-		tx:      transaction.New(pool),
+		tx:      transaction.New(pool, slog.New(slog.NewTextHandler(io.Discard, nil))),
 	}
 }
 
