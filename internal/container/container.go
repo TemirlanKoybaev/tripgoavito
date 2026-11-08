@@ -27,7 +27,10 @@ import (
 	getuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/get"
 )
 
-const telemetryShutdownTimeout = 5 * time.Second
+const (
+	telemetryShutdownTimeout = 5 * time.Second
+	telemetryErrorLogEvery   = 30 * time.Second
+)
 
 type Container struct {
 	Server            *http.Server
@@ -37,11 +40,9 @@ type Container struct {
 }
 
 func New(ctx context.Context, cfg *config.Config, lg *slog.Logger) (*Container, error) {
-	// Ошибки самого OTel SDK (коллектор недоступен и т. п.) идут в наш лог, а не в стандартный.
-	// Warn, а не Error: сервис без телеметрии продолжает работать.
-	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-		lg.Warn("telemetry error", slog.Any("error", err))
-	}))
+	// Ошибки самого OTel SDK (коллектор недоступен и т. п.) идут в наш лог, а не в стандартный,
+	// и не чаще раза в telemetryErrorLogEvery: иначе недоступный коллектор забьёт лог.
+	otel.SetErrorHandler(telemetry.NewErrorHandler(lg, telemetryErrorLogEvery))
 
 	metrics, shutdownTelemetry, err := telemetry.Setup(ctx, cfg.ServiceVersion)
 	if err != nil {
@@ -95,9 +96,11 @@ func New(ctx context.Context, cfg *config.Config, lg *slog.Logger) (*Container, 
 	return &Container{Server: server, pool: pool, shutdownTelemetry: shutdownTelemetry, log: lg}, nil
 }
 
+// Close сначала сбрасывает телеметрию, потом закрывает пул: финальный сбор метрик
+// читает gauge tripgo.trips.active из БД, и с закрытым пулом он падал бы с ошибкой.
 func (c *Container) Close() {
-	c.pool.Close()
 	flushTelemetry(c.log, c.shutdownTelemetry)
+	c.pool.Close()
 }
 
 func flushTelemetry(lg *slog.Logger, shutdown func(context.Context) error) {
@@ -105,6 +108,7 @@ func flushTelemetry(lg *slog.Logger, shutdown func(context.Context) error) {
 	defer cancel()
 
 	if err := shutdown(ctx); err != nil {
-		lg.Error("shutdown telemetry", slog.Any("error", err))
+		// Warn: недоставленная телеметрия не мешает сервису, он уже остановлен штатно.
+		lg.Warn("shutdown telemetry", slog.Any("error", err))
 	}
 }
