@@ -20,6 +20,6 @@ run:
 	go run ./cmd/trip-service
 
 test:
-	go test ./...
+	go test -race -cover $$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
 lint:
 	golangci-lint run ./...
