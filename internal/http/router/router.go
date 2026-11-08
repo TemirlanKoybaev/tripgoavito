@@ -6,6 +6,7 @@ import (
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/domainerror"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
 )
 
 type (
@@ -60,6 +61,7 @@ func (s *Router) Ready(w http.ResponseWriter, r *http.Request) {
 
 func (s *Router) Handler() http.Handler {
 	return api.HandlerWithOptions(s, api.ChiServerOptions{
+		Middlewares:      []api.MiddlewareFunc{middleware.TagRoute},
 		ErrorHandlerFunc: paramErrorHandler,
 	})
 }

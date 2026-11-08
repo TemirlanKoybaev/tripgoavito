@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/health"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/router"
 	createhttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/create"
 	finishhttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/finish"
@@ -63,11 +63,7 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
 	handler := router.New(createHandler, getHandler, finishHandler, healthHandler).Handler()
-	handler = otelhttp.NewHandler(handler, "http.server",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-			return r.Method
-		}),
-	)
+	handler = middleware.Tracing(handler)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
