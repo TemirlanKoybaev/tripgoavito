@@ -3,9 +3,12 @@ package container
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/health"
@@ -15,6 +18,7 @@ import (
 	gethttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/get"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres/transaction"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/telemetry"
 	historyrepo "github.com/TemirlanKoybaev/tripgoavito.git/internal/repository/history"
 	triprepo "github.com/TemirlanKoybaev/tripgoavito.git/internal/repository/trip"
 	createuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/create"
@@ -22,12 +26,20 @@ import (
 	getuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/get"
 )
 
+const telemetryShutdownTimeout = 5 * time.Second
+
 type Container struct {
-	Server *http.Server
-	pool   *pgxpool.Pool
+	Server            *http.Server
+	pool              *pgxpool.Pool
+	shutdownTelemetry func(context.Context) error
 }
 
 func New(ctx context.Context, cfg *config.Config) (*Container, error) {
+	shutdownTelemetry, err := telemetry.Setup(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("setup telemetry: %w", err)
+	}
+
 	pool, err := postgres.Connect(
 		ctx,
 		cfg.DatabaseURL,
@@ -37,6 +49,7 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 		cfg.DatabaseConnectTimeout,
 	)
 	if err != nil {
+		flushTelemetry(shutdownTelemetry)
 		return nil, fmt.Errorf("connect db: %w", err)
 	}
 
@@ -50,6 +63,11 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
 	handler := router.New(createHandler, getHandler, finishHandler, healthHandler).Handler()
+	handler = otelhttp.NewHandler(handler, "http.server",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method
+		}),
+	)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -60,9 +78,19 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
 
-	return &Container{Server: server, pool: pool}, nil
+	return &Container{Server: server, pool: pool, shutdownTelemetry: shutdownTelemetry}, nil
 }
 
 func (c *Container) Close() {
 	c.pool.Close()
+	flushTelemetry(c.shutdownTelemetry)
+}
+
+func flushTelemetry(shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
+	defer cancel()
+
+	if err := shutdown(ctx); err != nil {
+		log.Printf("shutdown telemetry: %v", err)
+	}
 }
