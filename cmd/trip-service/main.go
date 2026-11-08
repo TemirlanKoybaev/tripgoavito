@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,35 +14,50 @@ import (
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/container"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/logger"
 )
 
+const defaultServiceName = "trip-service"
+
 func main() {
-	if err := run(); err != nil {
-		log.Fatal(err)
-	}
+	os.Exit(run())
 }
 
-func run() error {
-	if err := godotenv.Load(); err != nil {
-		log.Println("no .env file, reading from environment")
-	}
+func run() int {
+	// Логгера ещё нет (его уровень задаёт конфиг), поэтому результат godotenv
+	// запоминаем и пишем в лог, как только он появится.
+	envErr := godotenv.Load()
 
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("config: %w", err)
+		logger.New("info", defaultServiceName).Error("load config", slog.Any("error", err))
+		return 1
 	}
 
-	c, err := container.New(context.Background(), cfg)
+	lg := logger.New(cfg.LogLevel, cfg.ServiceName)
+	if envErr != nil {
+		lg.Debug("no .env file, reading from environment")
+	}
+
+	if err := serve(cfg, lg); err != nil {
+		lg.Error("service failed", slog.Any("error", err))
+		return 1
+	}
+	return 0
+}
+
+func serve(cfg *config.Config, lg *slog.Logger) error {
+	lg.Info("service starting", slog.String("version", cfg.ServiceVersion))
+
+	c, err := container.New(context.Background(), cfg, lg)
 	if err != nil {
 		return fmt.Errorf("container: %w", err)
 	}
 	defer c.Close()
 
-	log.Println("connected to database")
-
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("starting on %s", cfg.HTTPAddr)
+		lg.Info("http server starting", slog.String("addr", cfg.HTTPAddr))
 		if err := c.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
@@ -54,10 +69,9 @@ func run() error {
 	select {
 	case err := <-serverErr:
 		return fmt.Errorf("server: %w", err)
-	case <-quit:
+	case sig := <-quit:
+		lg.Info("service stopping", slog.String("signal", sig.String()))
 	}
-
-	log.Println("shutting down...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
@@ -66,6 +80,7 @@ func run() error {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 
-	log.Println("server stopped")
+	lg.Info("http server stopped")
+	lg.Info("service stopped")
 	return nil
 }

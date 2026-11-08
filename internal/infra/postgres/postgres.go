@@ -24,8 +24,9 @@ func Connect(ctx context.Context, databaseURL string, maxConns, minConns int32, 
 	// Метрики otelpgx отключены (noop): db.client.operation.duration пишет
 	// metricsTracer, потому что у otelpgx нет db.collection.name и error.type.
 	tracer := otelpgx.NewTracer(otelpgx.WithMeterProvider(metricnoop.NewMeterProvider()))
+	// metricsTracer первым: его TraceQueryEnd должен отработать до span.End у otelpgx.
 	if recorder != nil {
-		cfg.ConnConfig.Tracer = multitracer.New(tracer, metricsTracer{recorder: recorder})
+		cfg.ConnConfig.Tracer = multitracer.New(metricsTracer{recorder: recorder}, tracer)
 	} else {
 		cfg.ConnConfig.Tracer = tracer
 	}

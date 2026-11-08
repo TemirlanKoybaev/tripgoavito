@@ -33,6 +33,7 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.pinger.Ping(ctx); err != nil {
 		domainerror.Record(r.Context(), err)
+		domainerror.RecordType(r.Context(), "db_unavailable")
 		response.JSON(w, r, http.StatusServiceUnavailable, api.HealthResponse{Status: api.Unavailable})
 		return
 	}

@@ -7,8 +7,10 @@ import (
 
 // Write отвечает клиенту problem+json. Настоящая причина 5xx и сбой записи
 // ответа не логируются здесь, а попадают в слот и уходят в «request handled».
+// Код проблемы (error.type) записывается для любой ошибки, в том числе 4xx.
 func Write(w http.ResponseWriter, r *http.Request, err error) {
 	status, problem := Problem(err)
+	RecordType(r.Context(), problem.Code)
 	if status == http.StatusInternalServerError {
 		Record(r.Context(), err)
 	}
