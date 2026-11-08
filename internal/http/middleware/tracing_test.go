@@ -50,7 +50,7 @@ func TestTracingMarksSpan(t *testing.T) {
 				domainerror.Write(w, r, errors.New("pq: connection refused to 10.0.0.5"))
 			},
 			wantStatus: codes.Error,
-			wantType:   "internal_error",
+			wantType:   codeInternalError,
 		},
 		{
 			name:       "status without domain code falls back to status number",
@@ -99,7 +99,7 @@ func TestTracingMarksSpan(t *testing.T) {
 				t.Errorf("error.type = %q, want %q", gotType, tt.wantType)
 			}
 			// Причина 5xx пишется в событие спана, но не в статус и не в атрибут.
-			if tt.wantType == "internal_error" && len(span.Events) == 0 {
+			if tt.wantType == codeInternalError && len(span.Events) == 0 {
 				t.Error("5xx must record the cause as a span event")
 			}
 		})
