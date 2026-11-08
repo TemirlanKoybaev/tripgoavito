@@ -49,6 +49,7 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 		cfg.DatabaseMinConns,
 		cfg.DatabaseMaxConnLifetime,
 		cfg.DatabaseConnectTimeout,
+		metrics,
 	)
 	if err != nil {
 		flushTelemetry(shutdownTelemetry)

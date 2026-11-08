@@ -16,6 +16,7 @@ var durationBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5
 type Metrics struct {
 	requestDuration metric.Float64Histogram
 	activeRequests  metric.Int64UpDownCounter
+	dbDuration      metric.Float64Histogram
 	tripsCreated    metric.Int64Counter
 	tripsCompleted  metric.Int64Counter
 }
@@ -38,6 +39,15 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("http.server.active_requests: %w", err)
 	}
 
+	dbDuration, err := meter.Float64Histogram("db.client.operation.duration",
+		metric.WithUnit("s"),
+		metric.WithDescription("Duration of database client operations"),
+		metric.WithExplicitBucketBoundaries(durationBuckets...),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db.client.operation.duration: %w", err)
+	}
+
 	tripsCreated, err := meter.Int64Counter("tripgo.trips.created",
 		metric.WithUnit("{trip}"),
 		metric.WithDescription("Created trips"),
@@ -57,6 +67,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 	return &Metrics{
 		requestDuration: requestDuration,
 		activeRequests:  activeRequests,
+		dbDuration:      dbDuration,
 		tripsCreated:    tripsCreated,
 		tripsCompleted:  tripsCompleted,
 	}, nil
@@ -79,6 +90,18 @@ func (m *Metrics) AddActiveRequest(ctx context.Context, delta int64, method, rou
 func (m *Metrics) RecordRequest(ctx context.Context, d time.Duration, method, route string, status int) {
 	attrs := append(routeAttrs(method, route), attribute.Int("http.response.status_code", status))
 	m.requestDuration.Record(ctx, d.Seconds(), metric.WithAttributes(attrs...))
+}
+
+// RecordDBOperation: пустые collection и errType в метрику не попадают.
+func (m *Metrics) RecordDBOperation(ctx context.Context, d time.Duration, operation, collection, errType string) {
+	attrs := []attribute.KeyValue{attribute.String("db.operation.name", operation)}
+	if collection != "" {
+		attrs = append(attrs, attribute.String("db.collection.name", collection))
+	}
+	if errType != "" {
+		attrs = append(attrs, attribute.String("error.type", errType))
+	}
+	m.dbDuration.Record(ctx, d.Seconds(), metric.WithAttributes(attrs...))
 }
 
 func (m *Metrics) TripCreated(ctx context.Context) {

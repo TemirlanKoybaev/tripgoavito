@@ -36,7 +36,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal("DATABASE_URL is not set, run make test-integration")
 	}
 
-	pool, err := postgres.Connect(context.Background(), url, 5, 1, time.Minute, 5*time.Second)
+	pool, err := postgres.Connect(context.Background(), url, 5, 1, time.Minute, 5*time.Second, nil)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
