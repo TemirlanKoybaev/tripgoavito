@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	domain "github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/tx"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres/transaction"
 )
 
 var tripColumns = []string{
@@ -43,7 +43,7 @@ func (r *Repository) fetch(ctx context.Context, id uuid.UUID, forUpdate bool) (*
 	defer cancel()
 
 	var t domain.Trip
-	err = tx.GetExecutor(ctx, r.pool).QueryRow(ctx, query, args...).Scan(
+	err = transaction.GetExecutor(ctx, r.pool).QueryRow(ctx, query, args...).Scan(
 		&t.ID, &t.UserID, &t.DriverID,
 		&t.StartLatitude, &t.StartLongitude,
 		&t.EndLatitude, &t.EndLongitude,

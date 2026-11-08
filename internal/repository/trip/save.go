@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	domain "github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/tx"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres/transaction"
 )
 
 const (
@@ -35,7 +35,7 @@ func (r *Repository) Create(ctx context.Context, t *domain.Trip) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	_, err = tx.GetExecutor(ctx, r.pool).Exec(ctx, query, args...)
+	_, err = transaction.GetExecutor(ctx, r.pool).Exec(ctx, query, args...)
 
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation && pgErr.ConstraintName == driverActiveIndex {
@@ -66,7 +66,7 @@ func (r *Repository) Update(ctx context.Context, t *domain.Trip) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	result, err := tx.GetExecutor(ctx, r.pool).Exec(ctx, query, args...)
+	result, err := transaction.GetExecutor(ctx, r.pool).Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("update trip: %w", err)
 	}

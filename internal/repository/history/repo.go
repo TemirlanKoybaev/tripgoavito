@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/tx"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres/transaction"
 )
 
 var psql = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
@@ -35,7 +35,7 @@ func (r *Repository) Create(ctx context.Context, tripID uuid.UUID, fromStatus *s
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	if _, err := tx.GetExecutor(ctx, r.pool).Exec(ctx, query, args...); err != nil {
+	if _, err := transaction.GetExecutor(ctx, r.pool).Exec(ctx, query, args...); err != nil {
 		return fmt.Errorf("insert status history: %w", err)
 	}
 	return nil
