@@ -8,14 +8,14 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func New(level string) *slog.Logger {
+func New(level, service string) *slog.Logger {
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(level)); err != nil {
 		lvl = slog.LevelInfo
 	}
 
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
-	return slog.New(traceHandler{Handler: handler})
+	return slog.New(traceHandler{Handler: handler}).With(slog.String("service", service))
 }
 
 type traceHandler struct {

@@ -36,8 +36,8 @@ type Container struct {
 }
 
 func New(ctx context.Context, cfg *config.Config) (*Container, error) {
-	lg := logger.New(cfg.LogLevel)
-	shutdownTelemetry, err := telemetry.Setup(ctx)
+	lg := logger.New(cfg.LogLevel, cfg.ServiceName)
+	metrics, shutdownTelemetry, err := telemetry.Setup(ctx, cfg.ServiceVersion)
 	if err != nil {
 		return nil, fmt.Errorf("setup telemetry: %w", err)
 	}
@@ -65,6 +65,7 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
 	handler := router.New(createHandler, getHandler, finishHandler, healthHandler).Handler()
+	handler = middleware.Metrics(metrics)(handler)
 	handler = middleware.Logging(lg)(handler)
 	handler = middleware.Tracing(handler)
 	handler = middleware.Recover(lg)(handler)
