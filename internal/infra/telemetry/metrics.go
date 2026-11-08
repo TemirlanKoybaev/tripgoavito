@@ -14,6 +14,7 @@ var durationBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5
 
 // Metrics хранит инструменты приложения. Имена фиксированы каталогом observability.md.
 type Metrics struct {
+	meter           metric.Meter
 	requestDuration metric.Float64Histogram
 	activeRequests  metric.Int64UpDownCounter
 	dbDuration      metric.Float64Histogram
@@ -65,6 +66,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 	}
 
 	return &Metrics{
+		meter:           meter,
 		requestDuration: requestDuration,
 		activeRequests:  activeRequests,
 		dbDuration:      dbDuration,
@@ -102,6 +104,34 @@ func (m *Metrics) RecordDBOperation(ctx context.Context, d time.Duration, operat
 		attrs = append(attrs, attribute.String("error.type", errType))
 	}
 	m.dbDuration.Record(ctx, d.Seconds(), metric.WithAttributes(attrs...))
+}
+
+// ActiveTripsSource отдаёт текущее число активных поездок (значение берётся из БД).
+type ActiveTripsSource interface {
+	CountActive(ctx context.Context) (int64, error)
+}
+
+// RegisterActiveTrips регистрирует gauge tripgo.trips.active. Значение читается
+// из источника в момент сбора метрик, а не хранится в памяти: так оно верно после
+// рестарта и при нескольких репликах. Если запрос не удался, точка не
+// отправляется (лучше пропуск, чем ложный ноль).
+func (m *Metrics) RegisterActiveTrips(src ActiveTripsSource) error {
+	_, err := m.meter.Int64ObservableGauge("tripgo.trips.active",
+		metric.WithUnit("{trip}"),
+		metric.WithDescription("Trips currently in active status"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			n, err := src.CountActive(ctx)
+			if err != nil {
+				return fmt.Errorf("observe active trips: %w", err)
+			}
+			o.Observe(n)
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("tripgo.trips.active: %w", err)
+	}
+	return nil
 }
 
 func (m *Metrics) TripCreated(ctx context.Context) {

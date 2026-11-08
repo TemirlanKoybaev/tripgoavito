@@ -242,3 +242,40 @@ func TestTransactionRollback(t *testing.T) {
 		t.Errorf("history rows = %d, want 0 after rollback", n)
 	}
 }
+
+// База общая с другими тестами и сервисом, поэтому сравниваем с исходным значением.
+func TestCountActive(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	before, err := e.trips.CountActive(ctx)
+	if err != nil {
+		t.Fatalf("CountActive() error = %v", err)
+	}
+
+	tr := e.newTrip(t)
+	if err := e.trips.Create(ctx, tr); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	afterCreate, err := e.trips.CountActive(ctx)
+	if err != nil {
+		t.Fatalf("CountActive() error = %v", err)
+	}
+	if afterCreate != before+1 {
+		t.Errorf("after create = %d, want %d", afterCreate, before+1)
+	}
+
+	if err := tr.Finish(time.Now().UTC().Truncate(time.Microsecond)); err != nil {
+		t.Fatalf("Finish() error = %v", err)
+	}
+	if err := e.trips.Update(ctx, tr); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	afterFinish, err := e.trips.CountActive(ctx)
+	if err != nil {
+		t.Fatalf("CountActive() error = %v", err)
+	}
+	if afterFinish != before {
+		t.Errorf("after finish = %d, want %d", afterFinish, before)
+	}
+}

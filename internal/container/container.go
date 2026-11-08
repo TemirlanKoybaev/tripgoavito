@@ -60,6 +60,12 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 	trips := triprepo.New(pool, cfg.DatabaseQueryTimeout)
 	history := historyrepo.New(pool, cfg.DatabaseQueryTimeout)
 
+	if err := metrics.RegisterActiveTrips(trips); err != nil {
+		pool.Close()
+		flushTelemetry(shutdownTelemetry)
+		return nil, fmt.Errorf("register active trips gauge: %w", err)
+	}
+
 	createHandler := createhttp.New(createuc.New(trips, history, txManager, metrics, lg))
 	getHandler := gethttp.New(getuc.New(trips))
 	finishHandler := finishhttp.New(finishuc.New(trips, history, txManager, metrics, lg))
