@@ -2,6 +2,7 @@ package response
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
@@ -11,7 +12,9 @@ import (
 func JSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(body)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		log.Printf("write response: %v", err)
+	}
 }
 
 func Trip(t *trip.Trip) api.Trip {

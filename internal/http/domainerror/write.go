@@ -17,5 +17,7 @@ func Write(w http.ResponseWriter, r *http.Request, err error) {
 
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(problem)
+	if encErr := json.NewEncoder(w).Encode(problem); encErr != nil {
+		log.Printf("write problem response: %v", encErr)
+	}
 }

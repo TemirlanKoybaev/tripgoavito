@@ -28,11 +28,11 @@ func Problem(err error) (int, api.Problem) {
 	}
 }
 
-func build(status int, code, title, detail string) (int, api.Problem) {
-	return status, api.Problem{
+func build(status int32, code, title, detail string) (int, api.Problem) {
+	return int(status), api.Problem{
 		Type:   problemBaseURL + strings.ReplaceAll(code, "_", "-"),
 		Title:  title,
-		Status: int32(status),
+		Status: status,
 		Detail: &detail,
 		Code:   code,
 	}
