@@ -49,14 +49,15 @@ make run
 
 ### Слои и зависимости
 
-Стрелка означает «импортирует». Список взят из `go list`, а не из головы: правила для домена и usecase ещё и проверяет линтер (`depguard` в `.golangci.yml`, `make lint`).
+Стрелка означает «импортирует». Правила зависимостей домена, usecase и HTTP-слоя проверяет `depguard` при запуске `make lint`.
 
 ```
 cmd/trip-service ──► container ──► всё остальное (единственное место, где создаются реализации)
 
-http/trip/{create,get,finish}, http/health ──► usecase (create: только тип Input), domain/trip,
-                                               http/domainerror, http/response, api
-http/router     ──► api, domain/trip, http/middleware, http/domainerror
+http/trip/{create,get,finish} ──► domain/trip, http/response, api, usecase (create: только тип Input)
+http/health     ──► api, http/response
+http/router     ──► api, domain/trip, http/middleware
+http/middleware ──► http/domainerror, http/response
 usecase/trip/*  ──► domain/trip
 repository/*    ──► domain/trip (trip), infra/postgres/transaction
 infra/*         ──► ничего из internal

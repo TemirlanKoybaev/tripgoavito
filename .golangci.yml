@@ -39,7 +39,7 @@ linters:
     - whitespace
 
   settings:
-    # Слои: домен ничего не знает про инфраструктуру, usecase не знает про транспорт.
+    # Границы домена, сценариев и HTTP-слоя.
     # Так правило перестаёт быть договорённостью и становится частью сборки.
     depguard:
       rules:
@@ -49,6 +49,10 @@ linters:
           deny:
             - pkg: net/http
               desc: домен не знает про транспорт
+            - pkg: github.com/TemirlanKoybaev/tripgoavito.git/api$
+              desc: домен не знает про HTTP API
+            - pkg: github.com/TemirlanKoybaev/tripgoavito.git/api/
+              desc: домен не знает про HTTP API
             - pkg: github.com/go-chi/chi
               desc: домен не знает про роутер
             - pkg: github.com/jackc/pgx
@@ -63,12 +67,28 @@ linters:
           deny:
             - pkg: net/http
               desc: usecase не знает про транспорт
+            - pkg: github.com/TemirlanKoybaev/tripgoavito.git/api$
+              desc: usecase не знает про HTTP API
+            - pkg: github.com/TemirlanKoybaev/tripgoavito.git/api/
+              desc: usecase не знает про HTTP API
             - pkg: github.com/go-chi/chi
               desc: usecase не знает про роутер
             - pkg: github.com/jackc/pgx
               desc: usecase работает через интерфейсы, а не через драйвер бд
             - pkg: github.com/Masterminds/squirrel
               desc: usecase не строит SQL
+        http:
+          files:
+            - "**/internal/http/**"
+          deny:
+            - pkg: github.com/TemirlanKoybaev/tripgoavito.git/internal/repository$
+              desc: HTTP-слой работает с данными через интерфейсы сценариев
+            - pkg: github.com/TemirlanKoybaev/tripgoavito.git/internal/repository/
+              desc: HTTP-слой работает с данными через интерфейсы сценариев
+            - pkg: github.com/TemirlanKoybaev/tripgoavito.git/internal/infra$
+              desc: инфраструктурные зависимости HTTP-слоя подключаются в контейнере
+            - pkg: github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/
+              desc: инфраструктурные зависимости HTTP-слоя подключаются в контейнере
 
     # Запрещает обращения через идентификатор с подчёркиванием, поэтому пакеты
     # называем без snake_case: internal/adapter/http, а не internal/adapter/http_server.
@@ -79,7 +99,7 @@ linters:
     revive:
       rules:
         - name: var-naming
-          disabled: true
+          disabled: false
 
     unparam:
       check-exported: true
@@ -99,8 +119,8 @@ linters:
       - builtin$
       - examples$
       # сгенерированный по OpenAPI и protobuf код не линтуем
-      - api/
-      - gen/
+      - ^api/
+      - ^gen/
 
 formatters:
   enable:

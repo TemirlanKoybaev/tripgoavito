@@ -13,7 +13,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -21,13 +20,9 @@ import (
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/router"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/logger"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/telemetry"
 )
 
-const (
-	httpStatusAttribute = "http.response.status_code"
-	panicMessage        = "test trip handler panic"
-)
+const panicMessage = "test trip handler panic"
 
 type panickingGet struct{}
 
@@ -45,14 +40,7 @@ func TestHTTPMiddlewareRecoversPanicWithTrace(t *testing.T) {
 		_ = traces.Shutdown(context.Background())
 	})
 
-	reader := sdkmetric.NewManualReader()
-	meters := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = meters.Shutdown(context.Background()) })
-	metrics, err := telemetry.NewMetrics(meters.Meter("test"))
-	if err != nil {
-		t.Fatalf("create metrics: %v", err)
-	}
-
+	reader, metrics := newHTTPMetrics(t)
 	var logs bytes.Buffer
 	lg := logger.NewWithWriter(&logs, "info", "trip-service")
 	handler := withHTTPMiddleware(router.New(nil, panickingGet{}, nil, nil, lg).Handler(), metrics, lg)
@@ -74,7 +62,7 @@ func TestHTTPMiddlewareRecoversPanicWithTrace(t *testing.T) {
 	}
 	span := spans[0]
 	attrs := attribute.NewSet(span.Attributes...)
-	if status, _ := attrs.Value(attribute.Key(httpStatusAttribute)); status.AsInt64() != http.StatusInternalServerError || span.Status.Code != codes.Error {
+	if status, _ := attrValue(attrs, statusAttribute); status.AsInt64() != http.StatusInternalServerError || span.Status.Code != codes.Error {
 		t.Errorf("HTTP span status = %d, %v, want 500, Error", status.AsInt64(), span.Status.Code)
 	}
 	if errorType, _ := attrs.Value("error.type"); errorType.AsString() != "panic" {
@@ -82,7 +70,8 @@ func TestHTTPMiddlewareRecoversPanicWithTrace(t *testing.T) {
 	}
 
 	assertPanicLog(t, &logs, span.SpanContext.TraceID().String(), span.SpanContext.SpanID().String())
-	assertHTTPMetricStatus(t, reader)
+	env := metricsEnv{reader: reader}
+	assertHTTPMetricStatus(t, env.collect(t))
 }
 
 func assertPanicLog(t *testing.T, logs *bytes.Buffer, traceID, spanID string) {
@@ -113,26 +102,17 @@ func assertPanicLog(t *testing.T, logs *bytes.Buffer, traceID, spanID string) {
 	t.Error("panic recovered log is missing")
 }
 
-func assertHTTPMetricStatus(t *testing.T, reader *sdkmetric.ManualReader) {
+func assertHTTPMetricStatus(t *testing.T, rm metricdata.ResourceMetrics) {
 	t.Helper()
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(t.Context(), &rm); err != nil {
-		t.Fatalf("collect HTTP metrics: %v", err)
+	duration := findMetric(rm, requestDurationMetric)
+	if duration == nil {
+		t.Fatal("http.server.request.duration metric is missing")
 	}
-	for _, scope := range rm.ScopeMetrics {
-		for _, metric := range scope.Metrics {
-			if metric.Name != "http.server.request.duration" {
-				continue
-			}
-			points := metric.Data.(metricdata.Histogram[float64]).DataPoints
-			if len(points) != 1 || points[0].Count != 1 {
-				t.Fatalf("HTTP duration data points = %+v, want one measurement", points)
-			}
-			if status, _ := points[0].Attributes.Value(attribute.Key(httpStatusAttribute)); status.AsInt64() != http.StatusInternalServerError {
-				t.Errorf("HTTP duration metric status = %d, want 500", status.AsInt64())
-			}
-			return
-		}
+	points := duration.Data.(metricdata.Histogram[float64]).DataPoints
+	if len(points) != 1 || points[0].Count != 1 {
+		t.Fatalf("HTTP duration data points = %+v, want one measurement", points)
 	}
-	t.Error("http.server.request.duration metric is missing")
+	if status, _ := attrValue(points[0].Attributes, statusAttribute); status.AsInt64() != http.StatusInternalServerError {
+		t.Errorf("HTTP duration metric status = %d, want 500", status.AsInt64())
+	}
 }

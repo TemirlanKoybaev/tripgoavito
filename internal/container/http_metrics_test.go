@@ -1,6 +1,7 @@
-package middleware_test
+package container
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/router"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/logger"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/telemetry"
 )
 
@@ -162,7 +164,7 @@ func TestMetricsUnmatchedRouteHasNoRouteLabel(t *testing.T) {
 	if _, ok := attrValue(points[0].Attributes, routeAttribute); ok {
 		t.Error("unmatched request must not carry http.route")
 	}
-	if v, _ := attrValue(points[0].Attributes, "http.response.status_code"); v.AsInt64() != http.StatusNotFound {
+	if v, _ := attrValue(points[0].Attributes, statusAttribute); v.AsInt64() != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", v.AsInt64())
 	}
 	if got := activeNow(t, env); got != 0 {
@@ -191,12 +193,9 @@ func TestRouterTagsInvalidTripID(t *testing.T) {
 			})
 
 			reader, metrics := newHTTPMetrics(t)
-			logger, logs := newTestLogger()
-			handler := router.New(nil, nil, nil, nil, logger).Handler()
-			handler = middleware.Recover(logger)(handler)
-			handler = middleware.Metrics(metrics)(handler)
-			handler = middleware.Logging(logger)(handler)
-			handler = middleware.Tracing(handler)
+			var logs bytes.Buffer
+			lg := logger.NewWithWriter(&logs, "info", "trip-service")
+			handler := withHTTPMiddleware(router.New(nil, nil, nil, nil, lg).Handler(), metrics, lg)
 
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, httptest.NewRequest(tt.method, tt.path, http.NoBody))
@@ -208,9 +207,16 @@ func TestRouterTagsInvalidTripID(t *testing.T) {
 				t.Errorf("problem = %+v, decode error = %v", problem, err)
 			}
 
-			rec := findLog(parseLog(t, logs), requestHandled)
-			if rec["route"] != tt.template || rec["status"] != float64(http.StatusBadRequest) {
-				t.Errorf("log = %v, want route %q and status 400", rec, tt.template)
+			var rec struct {
+				Message string `json:"msg"`
+				Route   string `json:"route"`
+				Status  int    `json:"status"`
+			}
+			if err := json.NewDecoder(&logs).Decode(&rec); err != nil {
+				t.Fatalf("decode request log: %v", err)
+			}
+			if rec.Message != "request handled" || rec.Route != tt.template || rec.Status != http.StatusBadRequest {
+				t.Errorf("request log = %+v, want route %q and status 400", rec, tt.template)
 			}
 
 			env := metricsEnv{reader: reader}
