@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
@@ -63,10 +65,13 @@ func (s *Router) Ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Router) Handler() http.Handler {
-	return api.HandlerWithOptions(s, api.ChiServerOptions{
-		Middlewares:      []api.MiddlewareFunc{middleware.TagRoute},
+	mux := chi.NewRouter()
+	// Inline middleware chi получает найденный маршрут до разбора параметров в api.
+	api.HandlerWithOptions(s, api.ChiServerOptions{
+		BaseRouter:       mux.With(middleware.TagRoute),
 		ErrorHandlerFunc: s.paramErrorHandler,
 	})
+	return mux
 }
 
 func (s *Router) paramErrorHandler(w http.ResponseWriter, r *http.Request, err error) {

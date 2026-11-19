@@ -2,28 +2,38 @@ package middleware_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/router"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/telemetry"
 )
 
-const routeTemplate = "/api/v1/trips/{tripId}"
+const (
+	routeTemplate         = "/api/v1/trips/{tripId}"
+	requestDurationMetric = "http.server.request.duration"
+	routeAttribute        = "http.route"
+	statusAttribute       = "http.response.status_code"
+)
 
 type metricsEnv struct {
 	reader  *sdkmetric.ManualReader
 	handler http.Handler
 }
 
-// newMetricsEnv собирает цепочку как в проде: Tracing → Metrics → chi с TagRoute.
-func newMetricsEnv(t *testing.T, onRequest func()) *metricsEnv {
+func newHTTPMetrics(t *testing.T) (*sdkmetric.ManualReader, *telemetry.Metrics) {
 	t.Helper()
 
 	reader := sdkmetric.NewManualReader()
@@ -32,16 +42,22 @@ func newMetricsEnv(t *testing.T, onRequest func()) *metricsEnv {
 	if err != nil {
 		t.Fatalf("NewMetrics: %v", err)
 	}
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	return reader, metrics
+}
 
-	router := chi.NewRouter()
-	router.With(middleware.TagRoute).Get(routeTemplate, func(w http.ResponseWriter, _ *http.Request) {
+func newMetricsEnv(t *testing.T, onRequest func()) *metricsEnv {
+	t.Helper()
+	reader, metrics := newHTTPMetrics(t)
+	mux := chi.NewRouter()
+	mux.With(middleware.TagRoute).Get(routeTemplate, func(w http.ResponseWriter, _ *http.Request) {
 		if onRequest != nil {
 			onRequest()
 		}
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := middleware.Tracing(middleware.Metrics(metrics)(router))
+	handler := middleware.Tracing(middleware.Metrics(metrics)(mux))
 	return &metricsEnv{reader: reader, handler: handler}
 }
 
@@ -99,7 +115,7 @@ func TestMetricsRecordsRouteTemplate(t *testing.T) {
 
 	rm := env.collect(t)
 
-	duration := findMetric(rm, "http.server.request.duration")
+	duration := findMetric(rm, requestDurationMetric)
 	if duration == nil {
 		t.Fatal("http.server.request.duration is not recorded")
 	}
@@ -111,13 +127,13 @@ func TestMetricsRecordsRouteTemplate(t *testing.T) {
 	if dp.Count != 2 {
 		t.Errorf("count = %d, want 2", dp.Count)
 	}
-	if v, _ := attrValue(dp.Attributes, "http.route"); v.AsString() != routeTemplate {
+	if v, _ := attrValue(dp.Attributes, routeAttribute); v.AsString() != routeTemplate {
 		t.Errorf("http.route = %q, want %q", v.AsString(), routeTemplate)
 	}
 	if v, _ := attrValue(dp.Attributes, "http.request.method"); v.AsString() != http.MethodGet {
 		t.Errorf("http.request.method = %q, want GET", v.AsString())
 	}
-	if v, _ := attrValue(dp.Attributes, "http.response.status_code"); v.AsInt64() != http.StatusOK {
+	if v, _ := attrValue(dp.Attributes, statusAttribute); v.AsInt64() != http.StatusOK {
 		t.Errorf("http.response.status_code = %d, want 200", v.AsInt64())
 	}
 
@@ -135,7 +151,7 @@ func TestMetricsUnmatchedRouteHasNoRouteLabel(t *testing.T) {
 	env.get("/no/such/path/1")
 	env.get("/no/such/path/2")
 
-	duration := findMetric(env.collect(t), "http.server.request.duration")
+	duration := findMetric(env.collect(t), requestDurationMetric)
 	if duration == nil {
 		t.Fatal("http.server.request.duration is not recorded")
 	}
@@ -143,7 +159,7 @@ func TestMetricsUnmatchedRouteHasNoRouteLabel(t *testing.T) {
 	if len(points) != 1 {
 		t.Fatalf("data points = %d, want 1 (unknown URLs must not create series)", len(points))
 	}
-	if _, ok := attrValue(points[0].Attributes, "http.route"); ok {
+	if _, ok := attrValue(points[0].Attributes, routeAttribute); ok {
 		t.Error("unmatched request must not carry http.route")
 	}
 	if v, _ := attrValue(points[0].Attributes, "http.response.status_code"); v.AsInt64() != http.StatusNotFound {
@@ -151,5 +167,80 @@ func TestMetricsUnmatchedRouteHasNoRouteLabel(t *testing.T) {
 	}
 	if got := activeNow(t, env); got != 0 {
 		t.Errorf("active_requests = %d, want 0", got)
+	}
+}
+
+func TestRouterTagsInvalidTripID(t *testing.T) {
+	tests := []struct {
+		method   string
+		path     string
+		template string
+	}{
+		{http.MethodGet, "/api/v1/trips/not-a-uuid", routeTemplate},
+		{http.MethodPost, "/api/v1/trips/not-a-uuid/finish", routeTemplate + "/finish"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			exporter := tracetest.NewInMemoryExporter()
+			provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+			prev := otel.GetTracerProvider()
+			otel.SetTracerProvider(provider)
+			t.Cleanup(func() {
+				otel.SetTracerProvider(prev)
+				_ = provider.Shutdown(context.Background())
+			})
+
+			reader, metrics := newHTTPMetrics(t)
+			logger, logs := newTestLogger()
+			handler := router.New(nil, nil, nil, nil, logger).Handler()
+			handler = middleware.Metrics(metrics)(handler)
+			handler = middleware.Logging(logger)(handler)
+			handler = middleware.Tracing(handler)
+			handler = middleware.Recover(logger)(handler)
+
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(tt.method, tt.path, http.NoBody))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", w.Code)
+			}
+			var problem api.Problem
+			if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil || problem.Code != "invalid_request" {
+				t.Errorf("problem = %+v, decode error = %v", problem, err)
+			}
+
+			rec := findLog(parseLog(t, logs), requestHandled)
+			if rec["route"] != tt.template || rec["status"] != float64(http.StatusBadRequest) {
+				t.Errorf("log = %v, want route %q and status 400", rec, tt.template)
+			}
+
+			env := metricsEnv{reader: reader}
+			duration := findMetric(env.collect(t), requestDurationMetric)
+			if duration == nil {
+				t.Fatal("http.server.request.duration is not recorded")
+			}
+			points := duration.Data.(metricdata.Histogram[float64]).DataPoints
+			if len(points) != 1 || points[0].Count != 1 {
+				t.Fatalf("duration data points = %+v, want one measurement", points)
+			}
+			attrs := points[0].Attributes
+			if route, _ := attrValue(attrs, routeAttribute); route.AsString() != tt.template {
+				t.Errorf("metric http.route = %q, want %q", route.AsString(), tt.template)
+			}
+			if status, _ := attrValue(attrs, statusAttribute); status.AsInt64() != http.StatusBadRequest {
+				t.Errorf("metric status = %d, want 400", status.AsInt64())
+			}
+
+			spans := exporter.GetSpans()
+			if len(spans) != 1 {
+				t.Fatalf("spans = %d, want 1", len(spans))
+			}
+			span := spans[0]
+			if route, _ := attrValue(attribute.NewSet(span.Attributes...), routeAttribute); route.AsString() != tt.template {
+				t.Errorf("span http.route = %q, want %q", route.AsString(), tt.template)
+			}
+			if want := tt.method + " " + tt.template; span.Name != want {
+				t.Errorf("span name = %q, want %q", span.Name, want)
+			}
+		})
 	}
 }
