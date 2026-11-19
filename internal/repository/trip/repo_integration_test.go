@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	domain "github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
@@ -152,6 +153,24 @@ func TestCreateDriverBusy(t *testing.T) {
 
 	if err := e.trips.Create(ctx, second); err != nil {
 		t.Fatalf("Create(second) after finish error = %v", err)
+	}
+}
+
+func TestCreateDuplicateTripID(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	first := e.newTrip(t)
+	second := e.newTrip(t)
+	second.ID = first.ID
+
+	if err := e.trips.Create(ctx, first); err != nil {
+		t.Fatalf("Create(first) error = %v", err)
+	}
+
+	err := e.trips.Create(ctx, second)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != "trips_pkey" {
+		t.Fatalf("Create(second) error = %v, want unique violation on trips_pkey", err)
 	}
 }
 

@@ -105,7 +105,7 @@ domain/trip     ──► ничего из internal
 
 ### Ошибки
 
-Доменные ошибки объявлены в `domain/trip/errors.go`. Перевод «ошибка → статус и `problem+json`» один: `domainerror.Problem` (через `errors.Is/As`). Репозиторий превращает нарушение уникального индекса (`23505`) в `ErrDriverBusy`, `pgx.ErrNoRows` в `ErrTripNotFound`. Любая неизвестная ошибка отдаётся клиенту как `500 internal_error` без деталей. Настоящая причина кладётся в слот на контексте запроса (`domainerror.Slot`) и попадает в запись «request handled» (поле `error`, уровень Error только для 5xx) и событием в корневой спан.
+Доменные ошибки объявлены в `domain/trip/errors.go`. Перевод «ошибка → статус и `problem+json`» один: `domainerror.Problem` (через `errors.Is/As`). Репозиторий возвращает `ErrDriverBusy`, если PostgreSQL пропустил вставку из-за активной поездки водителя, и `ErrTripNotFound` при `pgx.ErrNoRows`. Любая неизвестная ошибка отдаётся клиенту как `500 internal_error` без деталей. Настоящая причина кладётся в слот на контексте запроса (`domainerror.Slot`) и попадает в запись «request handled» (поле `error`, уровень Error только для 5xx) и событием в корневой спан.
 
 ### Транзакции и побочные эффекты
 
@@ -147,7 +147,7 @@ usecase открывает транзакцию через `txManager.Do`, ре�
 | Команда | Что делает |
 |---|---|
 | `make test` | unit-тесты с `-race` и покрытием |
-| `make test-integration` | интеграционные тесты репозитория; нужны `.env` с `DATABASE_URL`, `tripgoctl environment start` и накатанные миграции |
+| `make test-integration` | интеграционные тесты репозиториев и HTTP API; нужны `.env` с `DATABASE_URL`, `tripgoctl environment start` и накатанные миграции |
 | `make lint` | `golangci-lint run ./...`; если команда не найдена: `export PATH=$PATH:$(go env GOPATH)/bin` |
 | `make run` | запуск сервиса (`.env` подхватывается автоматически) |
 
@@ -193,4 +193,4 @@ type TxManager interface {
 CREATE UNIQUE INDEX trips_driver_active_idx ON trips (driver_id) WHERE status = 'active';
 ```
 
-Два параллельных `INSERT` с одним `driver_id` — один проходит, второй получает ошибку PostgreSQL `23505`, которая маппится в `409 driver_busy`.
+При двух параллельных `INSERT` с одним `driver_id` PostgreSQL выполняет одну вставку. Для второй запрос с `ON CONFLICT (driver_id) WHERE status = 'active' DO NOTHING` меняет ноль строк, и сервис отвечает `409 driver_busy`. Нарушения других ограничений, например `trips_pkey`, PostgreSQL возвращает как ошибки.

@@ -2,19 +2,11 @@ package trip
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	domain "github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres/transaction"
-)
-
-const (
-	pgUniqueViolation = "23505"
-	driverActiveIndex = "trips_driver_active_idx"
 )
 
 func (r *Repository) Create(ctx context.Context, t *domain.Trip) error {
@@ -27,6 +19,7 @@ func (r *Repository) Create(ctx context.Context, t *domain.Trip) error {
 			t.StartLatitude, t.StartLongitude,
 			t.EndLatitude, t.EndLongitude,
 			t.Price, t.Status, t.StartedAt).
+		Suffix("ON CONFLICT (driver_id) WHERE status = 'active' DO NOTHING").
 		ToSql()
 	if err != nil {
 		return fmt.Errorf("build query: %w", err)
@@ -35,14 +28,12 @@ func (r *Repository) Create(ctx context.Context, t *domain.Trip) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	_, err = transaction.GetExecutor(ctx, r.pool).Exec(ctx, query, args...)
-
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation && pgErr.ConstraintName == driverActiveIndex {
-		return domain.ErrDriverBusy
-	}
+	result, err := transaction.GetExecutor(ctx, r.pool).Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("insert trip: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrDriverBusy
 	}
 	return nil
 }
