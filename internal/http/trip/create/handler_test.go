@@ -3,6 +3,7 @@ package create_test
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/create"
 	createuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/create"
 )
@@ -86,7 +88,8 @@ func TestHandlerCreate(t *testing.T) {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest(http.MethodPost, "/trips", strings.NewReader(tt.body))
 
-			create.New(uc).Handle(w, r, api.CreateTripParams{})
+			err := create.New(uc).Handle(w, r, api.CreateTripParams{})
+			middleware.RespondError(slog.New(slog.DiscardHandler), w, r, err)
 
 			if w.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", w.Code, tt.wantStatus)

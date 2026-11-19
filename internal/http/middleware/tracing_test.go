@@ -2,6 +2,7 @@ package middleware_test
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,11 +13,11 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/domainerror"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
 )
 
 func TestTracingMarksSpan(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
 	tests := []struct {
 		name       string
 		handler    http.HandlerFunc
@@ -31,7 +32,7 @@ func TestTracingMarksSpan(t *testing.T) {
 		{
 			name: "client error has type but no error status",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				domainerror.Write(w, r, trip.ErrTripNotFound)
+				middleware.RespondError(logger, w, r, trip.ErrTripNotFound)
 			},
 			wantStatus: codes.Unset,
 			wantType:   "trip_not_found",
@@ -39,7 +40,7 @@ func TestTracingMarksSpan(t *testing.T) {
 		{
 			name: "conflict is a client error too",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				domainerror.Write(w, r, trip.ErrDriverBusy)
+				middleware.RespondError(logger, w, r, trip.ErrDriverBusy)
 			},
 			wantStatus: codes.Unset,
 			wantType:   "driver_busy",
@@ -47,7 +48,7 @@ func TestTracingMarksSpan(t *testing.T) {
 		{
 			name: "internal error sets error status and low-cardinality type",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				domainerror.Write(w, r, errors.New("pq: connection refused to 10.0.0.5"))
+				middleware.RespondError(logger, w, r, errors.New("pq: connection refused to 10.0.0.5"))
 			},
 			wantStatus: codes.Error,
 			wantType:   codeInternalError,

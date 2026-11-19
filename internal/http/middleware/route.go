@@ -11,8 +11,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/domainerror"
 )
 
 type routeKey struct{}
@@ -44,22 +42,21 @@ func Tracing(next http.Handler) http.Handler {
 	)
 }
 
-// withRequestState кладёт в контекст состояние запроса (шаблон маршрута и слот
-// ошибки) и после ответа размечает корневой спан по итогу запроса.
+// withRequestState передаёт шаблон маршрута через контекст и размечает
+// корневой спан после ответа.
 func withRequestState(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), routeKey{}, &routeHolder{})
-		ctx, slot := domainerror.WithSlot(ctx)
 		r = r.WithContext(ctx)
 
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rec := observeResponse(w)
 		panicked := true
 		defer func() {
 			status := rec.status
 			if panicked {
 				status = http.StatusInternalServerError
 			}
-			markSpan(trace.SpanFromContext(ctx), status, slot, panicked)
+			markSpan(trace.SpanFromContext(ctx), status, rec.errType, rec.cause, panicked)
 		}()
 
 		next.ServeHTTP(rec, r)
@@ -71,8 +68,7 @@ func withRequestState(next http.Handler) http.Handler {
 // 4xx — ошибка клиента, а не сервиса, спан у неё остаётся без ошибки.
 // error.type берём из кода доменной ошибки (trip_not_found), а если кода нет,
 // из статуса ("404"): оба значения низкокардинальны, в отличие от текста ошибки.
-func markSpan(span trace.Span, status int, slot *domainerror.Slot, panicked bool) {
-	errType := slot.Type()
+func markSpan(span trace.Span, status int, errType string, cause error, panicked bool) {
 	if errType == "" {
 		switch {
 		case panicked:
@@ -86,8 +82,8 @@ func markSpan(span trace.Span, status int, slot *domainerror.Slot, panicked bool
 	}
 
 	if status >= http.StatusInternalServerError {
-		if err := slot.Err(); err != nil {
-			span.RecordError(err)
+		if cause != nil {
+			span.RecordError(cause)
 		}
 		// Описание не задаём: otelhttp после хендлера всё равно перезапишет его пустым,
 		// а тип ошибки уже лежит в error.type.

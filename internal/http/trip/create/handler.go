@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/domainerror"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/response"
 	createuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/create"
 )
@@ -17,11 +16,10 @@ func New(u usecase) *Handler {
 	return &Handler{usecase: u}
 }
 
-func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, _ api.CreateTripParams) {
+func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, _ api.CreateTripParams) error {
 	body, err := decode(w, r)
 	if err != nil {
-		domainerror.Write(w, r, err)
-		return
+		return err
 	}
 
 	t, err := h.usecase.Create(r.Context(), createuc.Input{
@@ -34,10 +32,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, _ api.CreateTri
 		Price:          body.Price,
 	})
 	if err != nil {
-		domainerror.Write(w, r, err)
-		return
+		return err
 	}
 
 	w.Header().Set("Location", "/api/v1/trips/"+t.ID.String())
-	response.JSON(w, r, http.StatusCreated, response.Trip(t))
+	return response.JSON(w, http.StatusCreated, response.Trip(t))
 }

@@ -78,7 +78,7 @@ func New(ctx context.Context, cfg *config.Config, lg *slog.Logger) (*Container, 
 	finishHandler := finishhttp.New(finishuc.New(trips, history, txManager, metrics, lg))
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
-	handler := router.New(createHandler, getHandler, finishHandler, healthHandler).Handler()
+	handler := router.New(createHandler, getHandler, finishHandler, healthHandler, lg).Handler()
 	handler = middleware.Metrics(metrics)(handler)
 	handler = middleware.Logging(lg)(handler)
 	handler = middleware.Tracing(handler)

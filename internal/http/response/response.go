@@ -6,15 +6,26 @@ import (
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/domainerror"
 )
 
-func JSON(w http.ResponseWriter, r *http.Request, status int, body any) {
+// WrittenError передаёт причину ошибки для ответа, чей статус уже отправлен.
+type WrittenError struct {
+	Status int
+	Code   string
+	Cause  error
+}
+
+func (e *WrittenError) Error() string { return e.Cause.Error() }
+
+func (e *WrittenError) Unwrap() error { return e.Cause }
+
+func JSON(w http.ResponseWriter, status int, body any) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		domainerror.Record(r.Context(), err)
+		return &WrittenError{Status: status, Cause: err}
 	}
+	return nil
 }
 
 func Trip(t *trip.Trip) api.Trip {

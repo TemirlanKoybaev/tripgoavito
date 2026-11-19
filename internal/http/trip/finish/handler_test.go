@@ -3,6 +3,7 @@ package finish_test
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/finish"
 )
 
@@ -71,7 +73,8 @@ func TestHandlerFinish(t *testing.T) {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest(http.MethodPost, "/trips/"+id.String()+"/finish", nil)
 
-			finish.New(uc).Handle(w, r, id)
+			err := finish.New(uc).Handle(w, r, id)
+			middleware.RespondError(slog.New(slog.DiscardHandler), w, r, err)
 
 			if w.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", w.Code, tt.wantStatus)

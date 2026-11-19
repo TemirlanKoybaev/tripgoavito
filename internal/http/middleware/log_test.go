@@ -10,11 +10,13 @@ import (
 	"testing"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/domainerror"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/http/middleware"
 )
 
-const codeInternalError = "internal_error"
+const (
+	codeInternalError = "internal_error"
+	requestHandled    = "request handled"
+)
 
 // logRecord — одна JSON-строка лога.
 type logRecord map[string]any
@@ -81,7 +83,7 @@ func TestRecover(t *testing.T) {
 	if rec == nil {
 		t.Fatalf("no \"panic recovered\" record in log:\n%s", buf.String())
 	}
-	if rec["level"] != "ERROR" {
+	if rec["level"] != slog.LevelError.String() {
 		t.Errorf("level = %v, want ERROR", rec["level"])
 	}
 	if rec["panic"] != "boom" {
@@ -93,6 +95,7 @@ func TestRecover(t *testing.T) {
 }
 
 func TestLogging(t *testing.T) {
+	fallbackLog := slog.New(slog.DiscardHandler)
 	tests := []struct {
 		name       string
 		handler    http.HandlerFunc
@@ -109,7 +112,7 @@ func TestLogging(t *testing.T) {
 		{
 			name: "4xx is info, not error",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				domainerror.Write(w, r, trip.ErrTripNotFound)
+				middleware.RespondError(fallbackLog, w, r, trip.ErrTripNotFound)
 			},
 			wantStatus: http.StatusNotFound,
 			wantLevel:  "INFO",
@@ -117,10 +120,10 @@ func TestLogging(t *testing.T) {
 		{
 			name: "5xx is error and carries the real cause",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				domainerror.Write(w, r, errors.New("db is down"))
+				middleware.RespondError(fallbackLog, w, r, errors.New("db is down"))
 			},
 			wantStatus: http.StatusInternalServerError,
-			wantLevel:  "ERROR",
+			wantLevel:  slog.LevelError.String(),
 			wantError:  "db is down",
 		},
 	}
@@ -138,7 +141,7 @@ func TestLogging(t *testing.T) {
 			}
 			rec := records[0]
 
-			if rec["msg"] != "request handled" {
+			if rec["msg"] != requestHandled {
 				t.Errorf("msg = %v, want request handled", rec["msg"])
 			}
 			if rec["level"] != tt.wantLevel {

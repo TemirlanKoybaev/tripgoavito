@@ -105,7 +105,7 @@ domain/trip     ──► ничего из internal
 
 ### Ошибки
 
-Доменные ошибки объявлены в `domain/trip/errors.go`. Перевод «ошибка → статус и `problem+json`» один: `domainerror.Problem` (через `errors.Is/As`). Репозиторий возвращает `ErrDriverBusy`, если PostgreSQL пропустил вставку из-за активной поездки водителя, и `ErrTripNotFound` при `pgx.ErrNoRows`. Любая неизвестная ошибка отдаётся клиенту как `500 internal_error` без деталей. Настоящая причина кладётся в слот на контексте запроса (`domainerror.Slot`) и попадает в запись «request handled» (поле `error`, уровень Error только для 5xx) и событием в корневой спан.
+Доменные ошибки объявлены в `domain/trip/errors.go`. Репозиторий возвращает `ErrDriverBusy`, если PostgreSQL пропустил вставку из-за активной поездки водителя, и `ErrTripNotFound` при `pgx.ErrNoRows`. HTTP-хендлеры возвращают ошибки роутеру. На границе со сгенерированным `api.ServerInterface` роутер передаёт ошибку в `middleware.RespondError`, который формирует `problem+json` через `domainerror.Problem`. Клиент получает неизвестную ошибку как `500 internal_error` без деталей. Обёртка `ResponseWriter` передаёт исходную причину 5xx в поле `error` записи «request handled» и в событие HTTP-спана. Сбой записи ответа после отправки заголовков тоже попадает в лог.
 
 ### Транзакции и побочные эффекты
 
