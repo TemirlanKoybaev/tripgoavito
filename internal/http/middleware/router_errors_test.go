@@ -61,10 +61,10 @@ func TestRouterReportsOriginal5xxCause(t *testing.T) {
 
 			logger, logs := newTestLogger()
 			handler := router.New(nil, get.New(db), nil, health.New(db, time.Second), logger).Handler()
+			handler = middleware.Recover(logger)(handler)
 			handler = middleware.Metrics(discardMetrics{})(handler)
 			handler = middleware.Logging(logger)(handler)
 			handler = middleware.Tracing(handler)
-			handler = middleware.Recover(logger)(handler)
 
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.path, http.NoBody))

@@ -72,7 +72,7 @@ domain/trip     ──► ничего из internal
 | инфраструктура | `internal/infra/{postgres,logger,telemetry}` | пул, менеджер транзакций, slog, OpenTelemetry |
 | сборка | `internal/container`, `cmd/trip-service` | `main` читает конфиг, создаёт логгер, зовёт `container.New`, ждёт сигнала |
 
-Цепочка middleware (`container.New`): `Recover → Tracing → Logging → Metrics → router`. Chi запускает `TagRoute` после сопоставления маршрута и до разбора параметров. Спан, лог и метрики получают шаблон маршрута (`/api/v1/trips/{tripId}`), в том числе при ошибке разбора.
+Цепочка middleware (`container.New`) идёт в порядке `Tracing → Logging → Metrics → Recover → router`. При панике обработчика `Recover` пишет стек с идентификаторами HTTP-спана, а спан и метрики видят статус отправленного ответа. Chi запускает `TagRoute` после сопоставления маршрута и до разбора параметров. Спан, лог и метрики получают шаблон маршрута (`/api/v1/trips/{tripId}`), в том числе при ошибке разбора.
 
 Глобальных объектов в своём коде нет, всё собирается в `container.New`. Исключение — глобальные регистрации самого OpenTelemetry (`otel.SetTracerProvider`, `SetMeterProvider`, `SetErrorHandler`): `otelhttp` и `otelpgx` читают их оттуда.
 

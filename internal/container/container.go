@@ -79,14 +79,10 @@ func New(ctx context.Context, cfg *config.Config, lg *slog.Logger) (*Container, 
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
 	handler := router.New(createHandler, getHandler, finishHandler, healthHandler, lg).Handler()
-	handler = middleware.Metrics(metrics)(handler)
-	handler = middleware.Logging(lg)(handler)
-	handler = middleware.Tracing(handler)
-	handler = middleware.Recover(lg)(handler)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           handler,
+		Handler:           withHTTPMiddleware(handler, metrics, lg),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTPWriteTimeout,
@@ -94,6 +90,13 @@ func New(ctx context.Context, cfg *config.Config, lg *slog.Logger) (*Container, 
 	}
 
 	return &Container{Server: server, pool: pool, shutdownTelemetry: shutdownTelemetry, log: lg}, nil
+}
+
+func withHTTPMiddleware(handler http.Handler, metrics *telemetry.Metrics, lg *slog.Logger) http.Handler {
+	handler = middleware.Recover(lg)(handler)
+	handler = middleware.Metrics(metrics)(handler)
+	handler = middleware.Logging(lg)(handler)
+	return middleware.Tracing(handler)
 }
 
 // Close сначала сбрасывает телеметрию, потом закрывает пул: финальный сбор метрик

@@ -193,10 +193,10 @@ func TestRouterTagsInvalidTripID(t *testing.T) {
 			reader, metrics := newHTTPMetrics(t)
 			logger, logs := newTestLogger()
 			handler := router.New(nil, nil, nil, nil, logger).Handler()
+			handler = middleware.Recover(logger)(handler)
 			handler = middleware.Metrics(metrics)(handler)
 			handler = middleware.Logging(logger)(handler)
 			handler = middleware.Tracing(handler)
-			handler = middleware.Recover(logger)(handler)
 
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, httptest.NewRequest(tt.method, tt.path, http.NoBody))

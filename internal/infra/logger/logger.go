@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 
@@ -9,12 +10,16 @@ import (
 )
 
 func New(level, service string) *slog.Logger {
+	return NewWithWriter(os.Stdout, level, service)
+}
+
+func NewWithWriter(out io.Writer, level, service string) *slog.Logger {
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(level)); err != nil {
 		lvl = slog.LevelInfo
 	}
 
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
+	handler := slog.NewJSONHandler(out, &slog.HandlerOptions{Level: lvl})
 	return slog.New(traceHandler{Handler: handler}).With(slog.String("service", service))
 }
 

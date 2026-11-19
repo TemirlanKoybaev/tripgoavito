@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -75,9 +76,14 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 						slog.Any("panic", p),
 						slog.String("stack", string(debug.Stack())),
 					)
-					_, problem := domainerror.Problem(fmt.Errorf("panic: %v", p))
+					cause := fmt.Errorf("panic: %v", p)
+					if rec := findObservedResponse(w); rec != nil {
+						rec.errType = "panic"
+						rec.cause = cause
+					}
+					status, problem := domainerror.Problem(cause)
 					if err := domainerror.Write(w, r, problem); err != nil {
-						reportError(logger, w, r, http.StatusInternalServerError, problem.Code, err)
+						reportError(logger, w, r, status, "panic", errors.Join(cause, err))
 					}
 				}
 			}()
