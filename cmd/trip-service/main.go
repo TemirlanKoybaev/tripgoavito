@@ -2,77 +2,85 @@ package main
 
 import (
 	"context"
-	"log"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/TemirlanKoybaev/tripgoavito.git/api"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/db"
-	"github.com/TemirlanKoybaev/tripgoavito.git/internal/handler"
 	"github.com/joho/godotenv"
+
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/container"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/logger"
 )
 
+const defaultServiceName = "trip-service"
+
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Println("no .env file, reading from environment")
-	}
+	os.Exit(run())
+}
+
+func run() int {
+	// Логгера ещё нет (его уровень задаёт конфиг), поэтому результат godotenv
+	// запоминаем и пишем в лог, как только он появится.
+	envErr := godotenv.Load()
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config error: %v", err)
+		logger.New("info", defaultServiceName).Error("load config", slog.Any("error", err))
+		return 1
 	}
 
-	ctx := context.Background()
+	lg := logger.New(cfg.LogLevel, cfg.ServiceName)
+	if envErr != nil {
+		lg.Debug("no .env file, reading from environment")
+	}
 
-	pool, err := db.Connect(
-		ctx,
-		cfg.DatabaseURL,
-		cfg.DatabaseMaxConns,
-		cfg.DatabaseMinConns,
-		cfg.DatabaseMaxConnLifetime,
-		cfg.DatabaseConnectTimeout,
-	)
+	if err := serve(cfg, lg); err != nil {
+		lg.Error("service failed", slog.Any("error", err))
+		return 1
+	}
+	return 0
+}
+
+func serve(cfg *config.Config, lg *slog.Logger) error {
+	lg.Info("service starting", slog.String("version", cfg.ServiceVersion))
+
+	c, err := container.New(context.Background(), cfg, lg)
 	if err != nil {
-		log.Fatalf("db error: %v", err)
+		return fmt.Errorf("container: %w", err)
 	}
-	defer pool.Close()
+	defer c.Close()
 
-	log.Println("connected to database")
-
-	h := handler.New(pool, cfg.DatabaseQueryTimeout)
-	srv := &http.Server{
-		Addr: cfg.HTTPAddr,
-		Handler: api.HandlerWithOptions(h, api.ChiServerOptions{
-			ErrorHandlerFunc: handler.ParamErrorHandler,
-		}),
-		ReadTimeout:       cfg.HTTPReadTimeout,
-		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
-		WriteTimeout:      cfg.HTTPWriteTimeout,
-		IdleTimeout:       cfg.HTTPIdleTimeout,
-	}
-
+	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("starting on %s", cfg.HTTPAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
+		lg.Info("http server starting", slog.String("addr", cfg.HTTPAddr))
+		if err := c.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
 
-	log.Println("shutting down...")
+	select {
+	case err := <-serverErr:
+		return fmt.Errorf("server: %w", err)
+	case sig := <-quit:
+		lg.Info("service stopping", slog.String("signal", sig.String()))
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("shutdown error: %v", err)
+	if err := c.Server.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
 	}
 
-	log.Println("server stopped")
+	lg.Info("http server stopped")
+	lg.Info("service stopped")
+	return nil
 }

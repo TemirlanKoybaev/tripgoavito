@@ -1,3 +1,4 @@
 .env
 .tripgo/
 cmd/trip-service/trip-service
+.idea/

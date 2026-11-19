@@ -10,6 +10,8 @@ import (
 type Config struct {
 	HTTPAddr              string
 	LogLevel              string
+	ServiceName           string
+	ServiceVersion        string
 	ShutdownTimeout       time.Duration
 	HTTPReadTimeout       time.Duration
 	HTTPReadHeaderTimeout time.Duration
@@ -26,9 +28,11 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		HTTPAddr:    getEnv("HTTP_ADDR", ":8080"),
-		LogLevel:    getEnv("LOG_LEVEL", "info"),
-		DatabaseURL: getEnv("DATABASE_URL", ""),
+		HTTPAddr:       getEnv("HTTP_ADDR", ":8080"),
+		LogLevel:       getEnv("LOG_LEVEL", "info"),
+		ServiceName:    getEnv("OTEL_SERVICE_NAME", "trip-service"),
+		ServiceVersion: getEnv("SERVICE_VERSION", "dev"),
+		DatabaseURL:    getEnv("DATABASE_URL", ""),
 	}
 
 	if cfg.DatabaseURL == "" {
