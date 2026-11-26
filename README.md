@@ -14,6 +14,7 @@ HTTP-сервис для управления поездками.
 # Поднять окружение
 tripgoctl cluster start
 tripgoctl environment start
+tripgoctl connect
 
 # Накатить миграции
 make migrate
@@ -39,8 +40,143 @@ make run
 | `DATABASE_MAX_CONN_LIFETIME` | Время жизни соединения | `30m` |
 | `DATABASE_CONNECT_TIMEOUT` | Таймаут подключения к БД | `5s` |
 | `DATABASE_QUERY_TIMEOUT` | Таймаут запроса к БД (и `Ping` в `/ready`) | `3s` |
+| `OTEL_SERVICE_NAME` | Имя сервиса в телеметрии и поле `service` в логах | `trip-service` |
+| `SERVICE_VERSION` | Версия сборки, атрибут ресурса `service.version` | `dev` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Адрес OTLP/HTTP-коллектора (читает OTel SDK, см. `.env.example`) | по умолчанию SDK |
 
 Все длительности должны быть больше нуля, `DATABASE_MIN_CONNS` не может превышать `DATABASE_MAX_CONNS` — иначе сервис не стартует.
+
+## Архитектура
+
+### Слои и зависимости
+
+Стрелка означает «импортирует». Правила зависимостей домена, usecase и HTTP-слоя проверяет `depguard` при запуске `make lint`.
+
+```
+cmd/trip-service ──► container ──► всё остальное (единственное место, где создаются реализации)
+
+http/trip/{create,get,finish} ──► domain/trip, http/response, api, usecase (create: только тип Input)
+http/health     ──► api, http/response
+http/router     ──► api, domain/trip, http/middleware
+http/middleware ──► http/domainerror, http/response
+usecase/trip/*  ──► domain/trip
+repository/*    ──► domain/trip (trip), infra/postgres/transaction
+infra/*         ──► ничего из internal
+domain/trip     ──► ничего из internal
+```
+
+| Слой | Пакет | Что делает |
+|---|---|---|
+| домен | `internal/domain/trip` | сущность `Trip`, статусы, переход `Finish`, ошибки `ErrTripNotFound`, `ErrTripCompleted`, `ErrDriverBusy`, `ValidationError` |
+| usecase | `internal/usecase/trip/{create,get,finish}` | сценарий: транзакция, вызовы репозиториев, после commit счётчик и бизнес-лог |
+| транспорт | `internal/http/...` | разбор запроса, вызов usecase, ответ; `domainerror` переводит ошибку в `problem+json`; `middleware` |
+| репозиторий | `internal/repository/{trip,history}` | SQL через squirrel и pgx, ошибки БД превращаются в доменные |
+| инфраструктура | `internal/infra/{postgres,logger,telemetry}` | пул, менеджер транзакций, slog, OpenTelemetry |
+| сборка | `internal/container`, `cmd/trip-service` | `main` читает конфиг, создаёт логгер, зовёт `container.New`, ждёт сигнала |
+
+Цепочка middleware (`container.New`) идёт в порядке `Tracing → Logging → Metrics → Recover → router`. При панике обработчика `Recover` пишет стек с идентификаторами HTTP-спана, а спан и метрики видят статус отправленного ответа. Chi запускает `TagRoute` после сопоставления маршрута и до разбора параметров. Спан, лог и метрики получают шаблон маршрута (`/api/v1/trips/{tripId}`), в том числе при ошибке разбора.
+
+Глобальных объектов в своём коде нет, всё собирается в `container.New`. Исключение — глобальные регистрации самого OpenTelemetry (`otel.SetTracerProvider`, `SetMeterProvider`, `SetErrorHandler`): `otelhttp` и `otelpgx` читают их оттуда.
+
+### Где объявлены интерфейсы и почему
+
+**Интерфейс объявляет тот, кто его использует**, в `contract.go` своего пакета, неэкспортируемым. Реализация про интерфейс не знает.
+
+| Потребитель | Интерфейсы | Кто реализует |
+|---|---|---|
+| `usecase/trip/create/contract.go` | `tripRepository.Create`, `historyRepository.Create`, `txManager.Do`, `tripMetrics.TripCreated` | `repository/trip`, `repository/history`, `transaction`, `telemetry.Metrics` |
+| `usecase/trip/finish/contract.go` | `tripRepository.GetForUpdate/Update`, `historyRepository.Create`, `txManager.Do`, `tripMetrics.TripCompleted` | они же |
+| `usecase/trip/get/contract.go` | `tripRepository.GetByID` | `repository/trip` |
+| `http/trip/{create,get,finish}/contract.go` | `usecase` с одним методом | `usecase/trip/*` |
+| `http/router/router.go` | `createHandler`, `getHandler`, `finishHandler`, `healthHandler` | пакеты хендлеров |
+| `http/middleware/metrics.go` | `httpMetrics` | `telemetry.Metrics` |
+| `infra/postgres/metrics_tracer.go` | `OperationRecorder` | `telemetry.Metrics` |
+| `infra/telemetry/metrics.go` | `ActiveTripsSource.CountActive` | `repository/trip` |
+
+Почему так:
+
+1. **Направление зависимостей.** usecase не импортирует ни репозиторий, ни телеметрию, ни `net/http`; в `go list -deps ./internal/usecase/... ./internal/domain/...` нет `net/http`, `pgx`, `chi`, `otel`. Репозиторий и `telemetry.Metrics` подходят под интерфейсы неявно, без импорта usecase.
+2. **Узкие интерфейсы.** usecase `get` видит у репозитория один метод `GetByID`, а не весь `Repository`. Поэтому моки маленькие, а тест проверяет ровно то, что сценарий вызывает.
+3. **Тесты без БД.** Моки генерируются `go:generate mockgen` в `mocks_test.go` рядом с кодом. Unit-тест usecase проверяет оркестрацию (что вызвано, в каком порядке, что при ошибке счётчик не растёт) за миллисекунды и без PostgreSQL.
+4. **Второй транспорт не трогает бизнес-логику.** usecase не знает, кто его вызывает: HTTP-хендлер, а в работе 4 обработчик сообщения брокера. Для второго транспорта добавляется новый слой обработчиков, который вызывает те же usecase; `domain` и `usecase` не меняются. Это следствие устройства кода, самого consumer в репозитории пока нет.
+
+Что в эту схему не укладывается:
+- `*slog.Logger` внедряется в usecase как конкретный тип: это стандартный логгер, интерфейс над ним ничего не добавляет.
+- `repository/trip` держит `*pgxpool.Pool` напрямую и без `contract.go`; его проверяют интеграционные тесты на настоящей БД.
+- Пакет `transaction` экспортирует свой `TxManager` как тип результата `New` (его использует интеграционный тест); usecase от него не зависят, у каждого свой `txManager`.
+
+### Ошибки
+
+Доменные ошибки объявлены в `domain/trip/errors.go`. Репозиторий возвращает `ErrDriverBusy`, если PostgreSQL пропустил вставку из-за активной поездки водителя, и `ErrTripNotFound` при `pgx.ErrNoRows`. HTTP-хендлеры возвращают ошибки роутеру. На границе со сгенерированным `api.ServerInterface` роутер передаёт ошибку в `middleware.RespondError`, который формирует `problem+json` через `domainerror.Problem`. Клиент получает неизвестную ошибку как `500 internal_error` без деталей. Обёртка `ResponseWriter` передаёт исходную причину 5xx в поле `error` записи «request handled» и в событие HTTP-спана. Сбой записи ответа после отправки заголовков тоже попадает в лог.
+
+### Транзакции и побочные эффекты
+
+usecase открывает транзакцию через `txManager.Do`, репозитории берут исполнителя из контекста (`transaction.GetExecutor`). Счётчики `tripgo.trips.created/completed` и логи «trip created/completed» пишутся только после успешного commit и не внутри транзакции.
+
+### Телеметрия
+
+| Сигнал | Где создаётся |
+|---|---|
+| `http.server.request.duration`, `http.server.active_requests` | `middleware.Metrics` (`http.route` — шаблон; встроенные метрики `otelhttp` отключены) |
+| `db.client.operation.duration` (`db.operation.name`, `db.collection.name`, `error.type`) | `infra/postgres/metrics_tracer.go`, рядом с `otelpgx` через `pgx/multitracer` |
+| `tripgo.trips.created`, `tripgo.trips.completed` | usecase `create` и `finish` после commit |
+| `tripgo.trips.active` | observable gauge, значение читает `repository/trip.CountActive` в момент сбора |
+| трейсы | `otelhttp` (корневой спан `METHOD /шаблон`), `otelpgx` (SQL-спаны); `error.type` на любой ошибке, статус Error только на 5xx и ошибках БД |
+| логи | `slog` JSON; `trace_id` и `span_id` добавляет `logger.traceHandler`, он читает спан из `ctx`, поэтому логировать нужно с `*Context` |
+
+Ошибки самого OTel SDK (например, коллектор недоступен) пишутся в лог как Warn «telemetry error» не чаще раза в 30 секунд (`telemetry.ErrorHandler`); сервис при этом продолжает отвечать.
+
+### Тесты
+
+- **Unit** (`make test`, с `-race` и покрытием): домен, usecase (gomock), хендлеры, `domainerror`, middleware (Recover, Logging, Metrics, Tracing), трейсеры БД.
+- **Интеграционные** (`make test-integration`, тег `integration`): репозиторий на настоящем PostgreSQL, включая откат транзакции, конфликт «водитель занят» и `CountActive`. База общая, поэтому тесты чистят за собой свои строки и сравнивают счётчики с исходным значением.
+
+## Отступления от ТЗ §4.1
+
+| Отступление | Причина |
+|---|---|
+| `cmd/trip-service` вместо `cmd/service` | Каталог появился в лабе 1 (коммит `757fb73`); на него завязаны `make run` и README. Переименование ничего не даёт. |
+| `api/` вместо `internal/generated` | Код генерируется `make generate` в `api/api.gen.go` (пакет `api`) с лабы 1 (`07a5773`); линтер исключает `api/` из проверки. Перенос потребовал бы поменять импорты во всех хендлерах без выгоды. |
+| Нет `internal/model` | Сущность `trip.Trip` лежит в `domain/trip`, без тегов и инфраструктуры, и её напрямую используют usecase, репозиторий и транспорт. Отдельный `model` дал бы копию структуры и конвертеры туда-обратно. Структуры границ свои: `api.*` для транспорта и `create.Input` для входа usecase. |
+| Лишние пакеты `http/router`, `http/response`, `http/health` | `router` реализует сгенерированный `api.ServerInterface` и раздаёт вызовы хендлерам; `response` общий для трёх ручек (запись JSON и `trip.Trip → api.Trip`), вместо `convert.go` в каждой; `health` (`/health`, `/ready`) не про поездки, поэтому не лежит в `http/trip/`. В `http/trip/create` вместо `convert.go` есть `validate.go`: он строго разбирает и проверяет тело запроса. |
+| Лишний `repository/history` и нет `contract.go`, `convert.go` в `repository/trip` | Вторая таблица `trip_status_history` получила свой репозиторий. Репозиторий работает с `*pgxpool.Pool` и сканирует строки прямо в `domain.Trip`, поэтому интерфейс и конвертер ему не нужны; он проверяется интеграционными тестами, а не моками. |
+| `infra/logger` отдельно от `infra/telemetry` | Логгер нужен `main` до создания контейнера: уровень берётся из конфига, а ошибку самого конфига тоже надо залогировать. Телеметрия поднимается позже, внутри `container.New`, и может не подняться. У пакетов разный жизненный цикл, и `logger` не тянет за собой SDK OpenTelemetry. |
+| `make test` запускает только пакеты с тестами | В этом окружении `go test -cover` на пакете без тестовых файлов падает: нет инструмента `covdata`. Список пакетов берётся из `go list` по `TestGoFiles`/`XTestGoFiles`. |
+| Имя таблицы в `db.collection.name` берётся регулярным выражением по тексту SQL | `pgx` отдаёт трейсеру только строку запроса, а `otelpgx` это поле для обычных запросов не заполняет. Регэксп (`FROM`/`INTO`/`UPDATE <имя>`) корректен для запросов репозиториев, они простые; для `JOIN`, подзапросов и CTE он взял бы только первую таблицу. Кардинальность ограничена: SQL пишем мы, а `BEGIN/COMMIT/ROLLBACK` таблицы не получают. |
+
+## Команды
+
+| Команда | Что делает |
+|---|---|
+| `make test` | unit-тесты с `-race` и покрытием |
+| `make test-integration` | интеграционные тесты репозиториев и HTTP API; нужны `.env` с `DATABASE_URL`, `tripgoctl environment start` и накатанные миграции |
+| `make lint` | `golangci-lint run ./...`; если команда не найдена: `export PATH=$PATH:$(go env GOPATH)/bin` |
+| `make run` | запуск сервиса (`.env` подхватывается автоматически) |
+
+## Опрос устаревших поездок
+
+**Сканер → очередь → воркеры → Push Service.** Устройство сохраняет координаты через `POST /api/v1/trips/{tripId}/positions`. Маршрут доступен через `GET` по тому же пути и отсортирован по `recorded_at`, затем по `id`. Запоздавшая точка остаётся в маршруте, а `last_position_at` хранит максимальное время координаты.
+
+1. На каждом тике сканер выбирает активные поездки, у которых `COALESCE(last_position_at, started_at)` раньше границы устаревания. Все запросы одного тика используют одну границу. Сканер читает порциями и продолжает после пары `(эффективное время, id)` последней строки.
+2. Пул берёт самые давние задачи из всей очереди. При равных временах раньше идёт меньший `id`. Поездка может быть в пуле только один раз, включая выполняющийся запрос. Если очередь полна, более старая задача вытесняет самую свежую. При равном или более позднем времени отбрасывается новая задача. Сканер фиксирует `dropped`, пишет предупреждение и заканчивает текущий проход.
+3. Воркеры отправляют по одному HTTP-запросу `REQUEST_POSITION` на `driver_id` с `trip_id` в `data`. Если координата сохранилась до начала обработки, после коммита транзакции ожидающая задача удаляется. Поездка, которая всё ещё устарела, снова доступна на следующем тике. После рестарта сканер заново читает подходящие поездки из PostgreSQL.
+
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `POSITION_CHECK_INTERVAL` | `30s` | Период опроса |
+| `POSITION_STALE_AFTER` | `60s` | Возраст последней координаты или начала поездки, после которого она попадает в выборку |
+| `POSITION_SCAN_BATCH_SIZE` | `100` | Максимальное число строк за запрос |
+| `POSITION_WORKERS` | `4` | Число воркеров |
+| `POSITION_QUEUE_SIZE` | `100` | Максимальное число ожидающих задач |
+| `PUSH_HTTP_URL` | Из `.env`, созданного `tripgoctl` | Обязательный базовый HTTP-адрес Push Service |
+| `PUSH_REQUEST_TIMEOUT` | `1s` | Таймаут одного Push-запроса |
+| `SHUTDOWN_TIMEOUT` | `10s` | Общий бюджет остановки сервиса |
+
+При `SIGINT` или `SIGTERM` сервис закрывает HTTP-приём и завершает текущие запросы, останавливает сканер и даёт воркерам разобрать очередь. На весь процесс действует общий `SHUTDOWN_TIMEOUT`. Если бюджет исчерпан, выполняемые Push-запросы отменяются, а ожидающие задачи сбрасываются. Затем освобождаются ресурсы Push-клиента и PostgreSQL.
+
+Результаты постановки видны в `tripgo.stale_checks`, число прочитанных за тик строк — в `tripgo.stale_checks.rows_read`. `tripgo.position_requests.queue.size` и `tripgo.position_requests.workers.active` показывают загрузку пула. Результаты и длительность Push-запросов фиксируются в `tripgo.position_requests` и `tripgo.position_requests.duration`. Успешно сохранённые координаты учитывает `tripgo.positions.saved`.
+
+После запуска учебного окружения создайте активную поездку и проверьте `REQUEST_POSITION` в `tripgoctl environment logs push-service`. Адреса Grafana и админки Push Service выдаёт `tripgoctl connect`. Чтобы проверить задержку, отправьте `POST` на адрес админки с телом `{"latency_ms":5000}`, а после проверки верните `{"latency_ms":0}`. [OpenAPI Push Service](contracts/openapi/push-service.openapi.yaml)
 
 ## Решения
 
@@ -50,7 +186,7 @@ make run
 
 ### Менеджер транзакций
 
-Реализован в `internal/tx/tx.go`. Интерфейс:
+Реализован в `internal/infra/postgres/transaction/transaction.go`. Интерфейс:
 
 ```go
 type TxManager interface {
@@ -58,11 +194,11 @@ type TxManager interface {
 }
 ```
 
-`Do` открывает транзакцию, кладёт её в контекст и вызывает `fn`. Если `fn` вернула `nil` — `COMMIT`, если ошибку или панику — `ROLLBACK`. Репозиторий достаёт исполнителя из контекста через `tx.GetExecutor`: есть транзакция — работает через неё, нет — через пул. Вложенный `Do` переиспользует существующую транзакцию. При откате используется контекст без отмены (клиент мог оборвать запрос), но с собственным таймаутом.
+`Do` открывает транзакцию, кладёт её в контекст и вызывает `fn`. Если `fn` вернула `nil` — `COMMIT`, если ошибку или панику — `ROLLBACK`. Репозиторий достаёт исполнителя из контекста через `transaction.GetExecutor`: есть транзакция — работает через неё, нет — через пул. Вложенный `Do` переиспользует существующую транзакцию. При откате используется контекст без отмены (клиент мог оборвать запрос), но с собственным таймаутом.
 
 ### Ошибки базы данных
 
-Репозиторий превращает ошибки PostgreSQL в доменные (`model.ErrTripNotFound`, `model.ErrDriverBusy`), хендлеры сравнивают их через `errors.Is` и про `pgx` ничего не знают.
+Репозиторий превращает ошибки PostgreSQL в доменные (`trip.ErrTripNotFound`, `trip.ErrDriverBusy`), хендлеры сравнивают их через `errors.Is` и про `pgx` ничего не знают.
 
 ### Завершение поездки
 
@@ -84,4 +220,4 @@ type TxManager interface {
 CREATE UNIQUE INDEX trips_driver_active_idx ON trips (driver_id) WHERE status = 'active';
 ```
 
-Два параллельных `INSERT` с одним `driver_id` — один проходит, второй получает ошибку PostgreSQL `23505`, которая маппится в `409 driver_busy`.
+При двух параллельных `INSERT` с одним `driver_id` PostgreSQL выполняет одну вставку. Для второй запрос с `ON CONFLICT (driver_id) WHERE status = 'active' DO NOTHING` меняет ноль строк, и сервис отвечает `409 driver_busy`. Нарушения других ограничений, например `trips_pkey`, PostgreSQL возвращает как ошибки.

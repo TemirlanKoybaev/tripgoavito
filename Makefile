@@ -5,7 +5,7 @@
 generate:
 	go tool oapi-codegen \
 		-generate types,chi-server \
-		-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
+		-include-operation-ids createTrip,getTrip,finishTrip,createTripPosition,listTripPositions,health,ready \
 		-package api \
 		-o api/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml
@@ -20,4 +20,8 @@ run:
 	go run ./cmd/trip-service
 
 test:
-	go test ./...
+	go test -race -cover $$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
+lint:
+	golangci-lint run ./...
+test-integration:
+	set -a; . ./.env; set +a; go test -tags=integration -race -count=1 ./internal/repository/... ./internal/container
