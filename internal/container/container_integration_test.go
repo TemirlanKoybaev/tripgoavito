@@ -15,32 +15,60 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/goleak"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/api"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
 )
 
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
+
 func newIntegrationContainer(t *testing.T) (*Container, time.Duration) {
 	t.Helper()
+	cfg := integrationConfig(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	return startIntegrationContainer(t, cfg, slog.New(slog.DiscardHandler)), cfg.DatabaseQueryTimeout
+}
 
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-
+func integrationConfig(t *testing.T, pushHandler http.HandlerFunc) *config.Config {
+	t.Helper()
+	push := httptest.NewServer(pushHandler)
+	t.Cleanup(push.Close)
+	t.Setenv("PUSH_HTTP_URL", push.URL)
 	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(collector.Close)
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", collector.URL+"/v1/traces")
 	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", collector.URL+"/v1/metrics")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.PositionCheckInterval = time.Hour
+	return cfg
+}
 
-	c, err := New(t.Context(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func startIntegrationContainer(t *testing.T, cfg *config.Config, lg *slog.Logger) *Container {
+	t.Helper()
+	c, err := New(context.WithoutCancel(t.Context()), cfg, lg)
 	if err != nil {
 		t.Fatalf("build service: %v", err)
 	}
-	t.Cleanup(c.Close)
-	return c, cfg.DatabaseQueryTimeout
+	t.Cleanup(func() { shutdownContainer(t, c) })
+	return c
+}
+
+func shutdownContainer(t *testing.T, c *Container) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 3*time.Second)
+	defer cancel()
+	if err := c.Shutdown(ctx); err != nil {
+		t.Errorf("shutdown: %v", err)
+	}
 }
 
 func TestCreateTripDriverBusy(t *testing.T) {

@@ -114,14 +114,15 @@ func Load() (*Config, error) {
 		*c.dst = n
 	}
 
-	// Окружение ЛР №2 ещё запускается без фонового опроса и адреса Push Service.
-	if raw := os.Getenv("PUSH_HTTP_URL"); raw != "" {
-		endpoint, err := url.Parse(raw)
-		if err != nil || endpoint.Hostname() == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
-			return nil, fmt.Errorf("PUSH_HTTP_URL must be an absolute HTTP or HTTPS URL")
-		}
-		cfg.PushHTTPURL = endpoint
+	raw := os.Getenv("PUSH_HTTP_URL")
+	if raw == "" {
+		return nil, fmt.Errorf("PUSH_HTTP_URL is required")
 	}
+	endpoint, err := url.Parse(raw)
+	if err != nil || endpoint.Hostname() == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return nil, fmt.Errorf("PUSH_HTTP_URL must be an absolute HTTP or HTTPS URL")
+	}
+	cfg.PushHTTPURL = endpoint
 
 	return cfg, nil
 }

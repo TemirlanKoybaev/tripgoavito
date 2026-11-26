@@ -32,7 +32,8 @@ func TestCreateValidatesBeforeTransaction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			u := positions.New(NewMocktripRepository(ctrl), NewMocktxManager(ctrl), NewMockpositionMetrics(ctrl), func() time.Time { return now })
+			u := positions.New(NewMocktripRepository(ctrl), NewMocktxManager(ctrl), NewMockpositionMetrics(ctrl),
+				NewMockpositionRequests(ctrl), func() time.Time { return now })
 			_, err := u.Create(t.Context(), trip.Position{Latitude: tt.latitude, Longitude: tt.longitude, RecordedAt: tt.at})
 			var invalid *trip.ValidationError
 			if !errors.As(err, &invalid) {
@@ -71,11 +72,14 @@ func TestCreateUsesTransaction(t *testing.T) {
 			repo := NewMocktripRepository(ctrl)
 			tx := NewMocktxManager(ctrl)
 			metrics := NewMockpositionMetrics(ctrl)
+			requests := NewMockpositionRequests(ctrl)
+			committed := false
 			ctx, txCtx := t.Context(), context.WithoutCancel(t.Context())
 			tx.EXPECT().Do(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, fn func(context.Context) error) error {
 				if err := fn(txCtx); err != nil {
 					return err
 				}
+				committed = tt.commitErr == nil
 				return tt.commitErr
 			})
 			lock := repo.EXPECT().GetForUpdate(txCtx, input.TripID).
@@ -89,8 +93,14 @@ func TestCreateUsesTransaction(t *testing.T) {
 
 			if tt.wantErr == nil {
 				metrics.EXPECT().PositionSaved(ctx)
+				requests.EXPECT().Cancel(ctx, input.TripID).DoAndReturn(func(context.Context, uuid.UUID) bool {
+					if !committed {
+						t.Error("position request was canceled before commit")
+					}
+					return true
+				})
 			}
-			got, err := positions.New(repo, tx, metrics, func() time.Time { return now }).Create(ctx, input)
+			got, err := positions.New(repo, tx, metrics, requests, func() time.Time { return now }).Create(ctx, input)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Create() error = %v, want %v", err, tt.wantErr)
 			}
@@ -115,7 +125,7 @@ func TestListPositions(t *testing.T) {
 			repo.EXPECT().GetByID(t.Context(), id).Return(&trip.Trip{ID: id, Status: trip.StatusCompleted}, nil),
 			repo.EXPECT().ListPositions(t.Context(), id).Return(points, nil),
 		)
-		got, err := positions.New(repo, NewMocktxManager(ctrl), NewMockpositionMetrics(ctrl), time.Now).List(t.Context(), id)
+		got, err := positions.New(repo, NewMocktxManager(ctrl), nil, nil, time.Now).List(t.Context(), id)
 		if err != nil || !slices.Equal(got, points) {
 			t.Fatalf("List() = %+v, %v, want %+v", got, err, points)
 		}
@@ -124,7 +134,7 @@ func TestListPositions(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := NewMocktripRepository(ctrl)
 		repo.EXPECT().GetByID(t.Context(), id).Return(nil, trip.ErrTripNotFound)
-		got, err := positions.New(repo, NewMocktxManager(ctrl), NewMockpositionMetrics(ctrl), time.Now).List(t.Context(), id)
+		got, err := positions.New(repo, NewMocktxManager(ctrl), nil, nil, time.Now).List(t.Context(), id)
 		if got != nil || !errors.Is(err, trip.ErrTripNotFound) {
 			t.Fatalf("List() = %+v, %v, want trip not found", got, err)
 		}

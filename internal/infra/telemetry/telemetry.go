@@ -36,16 +36,21 @@ func Setup(ctx context.Context, version string) (*Metrics, func(context.Context)
 		return nil, nil, fmt.Errorf("create trace exporter: %w", err)
 	}
 
+	traceBatch := sdktrace.NewBatchSpanProcessor(traceExporter)
 	tracerProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithSpanProcessor(traceBatch),
 		sdktrace.WithResource(res),
 	)
+	shutdownTraces := func(ctx context.Context) error {
+		// TracerProvider пропускает остановку процессора, если контекст уже истёк.
+		return errors.Join(traceBatch.Shutdown(ctx), tracerProvider.Shutdown(ctx))
+	}
 
 	metricExporter, err := otlpmetrichttp.New(ctx)
 	if err != nil {
 		return nil, nil, errors.Join(
 			fmt.Errorf("create metric exporter: %w", err),
-			tracerProvider.Shutdown(ctx),
+			shutdownTraces(ctx),
 		)
 	}
 
@@ -66,13 +71,13 @@ func Setup(ctx context.Context, version string) (*Metrics, func(context.Context)
 	if err != nil {
 		return nil, nil, errors.Join(
 			fmt.Errorf("create metrics: %w", err),
-			tracerProvider.Shutdown(ctx),
+			shutdownTraces(ctx),
 			meterProvider.Shutdown(ctx),
 		)
 	}
 
 	shutdown := func(ctx context.Context) error {
-		return errors.Join(tracerProvider.Shutdown(ctx), meterProvider.Shutdown(ctx))
+		return errors.Join(shutdownTraces(ctx), meterProvider.Shutdown(ctx))
 	}
 	return metrics, shutdown, nil
 }

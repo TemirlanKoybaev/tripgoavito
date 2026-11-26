@@ -37,6 +37,7 @@ func Connect(ctx context.Context, databaseURL string, maxConns, minConns int32, 
 	}
 
 	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 

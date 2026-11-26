@@ -16,6 +16,7 @@ const (
 	batchSizeEnv     = "POSITION_SCAN_BATCH_SIZE"
 	pushURLEnv       = "PUSH_HTTP_URL"
 	pushTimeoutEnv   = "PUSH_REQUEST_TIMEOUT"
+	defaultPushURL   = "http://push.example.test:8090"
 )
 
 type positionSettings struct {
@@ -35,13 +36,14 @@ func TestPositionSettings(t *testing.T) {
 		want positionSettings
 	}{
 		{
-			name: "defaults with the lab 2 environment",
+			name: "defaults with the push service address",
 			want: positionSettings{
 				checkInterval: 30 * time.Second,
 				staleAfter:    time.Minute,
 				workers:       4,
 				queueSize:     100,
 				batchSize:     100,
+				pushURL:       defaultPushURL,
 				pushTimeout:   time.Second,
 			},
 		},
@@ -120,6 +122,7 @@ func TestPositionSettingsRejectInvalidValues(t *testing.T) {
 		{queueSizeEnv, "0"},
 		{batchSizeEnv, "2.5"},
 		{pushTimeoutEnv, "-1s"},
+		{pushURLEnv, ""},
 		{pushURLEnv, "push.example.test:8080"},
 		{pushURLEnv, "ftp://push.example.test"},
 		{pushURLEnv, "http://:8080"},
@@ -143,8 +146,9 @@ func setPositionTestEnv(t *testing.T) {
 	t.Setenv("DATABASE_MIN_CONNS", "0")
 	t.Setenv("HTTP_ADDR", "127.0.0.1:8088")
 	for _, key := range []string{
-		checkIntervalEnv, staleAfterEnv, workersEnv, queueSizeEnv, batchSizeEnv, pushURLEnv, pushTimeoutEnv,
+		checkIntervalEnv, staleAfterEnv, workersEnv, queueSizeEnv, batchSizeEnv, pushTimeoutEnv,
 	} {
 		t.Setenv(key, "")
 	}
+	t.Setenv(pushURLEnv, defaultPushURL)
 }

@@ -53,8 +53,6 @@ func serve(cfg *config.Config, lg *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("container: %w", err)
 	}
-	defer c.Close()
-
 	serverErr := make(chan error, 1)
 	go func() {
 		lg.Info("http server starting", slog.String("addr", cfg.HTTPAddr))
@@ -65,10 +63,12 @@ func serve(cfg *config.Config, lg *slog.Logger) error {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(quit)
 
+	var serveErr error
 	select {
 	case err := <-serverErr:
-		return fmt.Errorf("server: %w", err)
+		serveErr = fmt.Errorf("server: %w", err)
 	case sig := <-quit:
 		lg.Info("service stopping", slog.String("signal", sig.String()))
 	}
@@ -76,11 +76,13 @@ func serve(cfg *config.Config, lg *slog.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
-	if err := c.Server.Shutdown(ctx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
+	if err := c.Shutdown(ctx); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return errors.Join(serveErr, fmt.Errorf("shutdown deadline exceeded: %w", err))
+		}
+		return errors.Join(serveErr, fmt.Errorf("shutdown: %w", err))
 	}
 
-	lg.Info("http server stopped")
 	lg.Info("service stopped")
-	return nil
+	return serveErr
 }
