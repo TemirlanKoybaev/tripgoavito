@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -19,7 +20,9 @@ import (
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/config"
 )
 
-func TestCreateTripDriverBusy(t *testing.T) {
+func newIntegrationContainer(t *testing.T) (*Container, time.Duration) {
+	t.Helper()
+
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -37,12 +40,17 @@ func TestCreateTripDriverBusy(t *testing.T) {
 		t.Fatalf("build service: %v", err)
 	}
 	t.Cleanup(c.Close)
+	return c, cfg.DatabaseQueryTimeout
+}
+
+func TestCreateTripDriverBusy(t *testing.T) {
+	c, queryTimeout := newIntegrationContainer(t)
 	server := httptest.NewServer(c.Server.Handler)
 	t.Cleanup(server.Close)
 
 	driverID := uuid.New()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 		defer cancel()
 		if _, err := c.pool.Exec(ctx, "DELETE FROM trips WHERE driver_id = $1", driverID); err != nil {
 			t.Errorf("clean up trips: %v", err)
@@ -93,4 +101,72 @@ func TestCreateTripDriverBusy(t *testing.T) {
 	if problem.Status != http.StatusConflict || problem.Code != "driver_busy" {
 		t.Errorf("problem = %+v, want status 409 and code driver_busy", problem)
 	}
+}
+
+func TestSaveAndListTripPositions(t *testing.T) {
+	c, queryTimeout := newIntegrationContainer(t)
+	handler := c.Server.Handler
+	const tripsPath = "/api/v1/trips"
+	created := requestJSON[api.Trip](t, handler, http.MethodPost, tripsPath, api.TripData{
+		UserId:     uuid.New(),
+		DriverId:   uuid.New(),
+		StartPoint: api.Coordinates{Latitude: 59.93, Longitude: 30.31},
+		EndPoint:   api.Coordinates{Latitude: 59.94, Longitude: 30.32},
+		Price:      1450,
+	}, http.StatusCreated)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+		defer cancel()
+		if _, err := c.pool.Exec(ctx, "DELETE FROM trips WHERE id = $1", created.Id); err != nil {
+			t.Errorf("clean up trip: %v", err)
+		}
+	})
+
+	tripPath := tripsPath + "/" + created.Id.String()
+	positionsPath := tripPath + "/positions"
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	post := func(at time.Time, latitude float64) api.TripPosition {
+		t.Helper()
+		return requestJSON[api.TripPosition](t, handler, http.MethodPost, positionsPath, api.PositionData{
+			Coordinates: api.Coordinates{Latitude: latitude, Longitude: 30.31},
+			RecordedAt:  at,
+		}, http.StatusCreated)
+	}
+	first := post(now.Add(789*time.Nanosecond), 59.93)
+	second := post(now, 59.94)
+	late := post(now.Add(-time.Minute), 59.95)
+	if first.RecordedAt != now || first.TripId != created.Id || first.Id <= 0 {
+		t.Errorf("first point = %+v, want persisted position at %v for trip %s", first, now, created.Id)
+	}
+	stored := requestJSON[api.Trip](t, handler, http.MethodGet, tripPath, nil, http.StatusOK)
+	if stored.LastPositionAt == nil || *stored.LastPositionAt != now {
+		t.Errorf("last_position_at = %v, want %v after the late point", stored.LastPositionAt, now)
+	}
+
+	requestJSON[api.Trip](t, handler, http.MethodPost, tripPath+"/finish", nil, http.StatusOK)
+	route := requestJSON[api.TripPositionsResponse](t, handler, http.MethodGet, positionsPath, nil, http.StatusOK)
+	want := []api.TripPosition{late, first, second}
+	if !slices.Equal(route.Positions, want) {
+		t.Errorf("positions = %+v, want %+v", route.Positions, want)
+	}
+}
+
+func requestJSON[T any](t *testing.T, handler http.Handler, method, path string, body any, status int) T {
+	t.Helper()
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != status {
+		t.Fatalf("%s %s status = %d, want %d, body = %s", method, path, w.Code, status, w.Body)
+	}
+	var response T
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return response
 }

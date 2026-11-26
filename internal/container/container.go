@@ -17,6 +17,7 @@ import (
 	createhttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/create"
 	finishhttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/finish"
 	gethttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/get"
+	positionshttp "github.com/TemirlanKoybaev/tripgoavito.git/internal/http/trip/positions"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/postgres/transaction"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/telemetry"
@@ -25,6 +26,7 @@ import (
 	createuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/create"
 	finishuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/finish"
 	getuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/get"
+	positionsuc "github.com/TemirlanKoybaev/tripgoavito.git/internal/usecase/trip/positions"
 )
 
 const (
@@ -76,9 +78,10 @@ func New(ctx context.Context, cfg *config.Config, lg *slog.Logger) (*Container, 
 	createHandler := createhttp.New(createuc.New(trips, history, txManager, metrics, lg))
 	getHandler := gethttp.New(getuc.New(trips))
 	finishHandler := finishhttp.New(finishuc.New(trips, history, txManager, metrics, lg))
+	positionsHandler := positionshttp.New(positionsuc.New(trips, txManager, time.Now))
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
-	handler := router.New(createHandler, getHandler, finishHandler, healthHandler, lg).Handler()
+	handler := router.New(createHandler, getHandler, finishHandler, positionsHandler, healthHandler, lg).Handler()
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

@@ -24,6 +24,11 @@ type (
 		Handle(w http.ResponseWriter, r *http.Request, tripID api.TripId) error
 	}
 
+	positionsHandler interface {
+		Create(w http.ResponseWriter, r *http.Request, tripID api.TripId) error
+		List(w http.ResponseWriter, r *http.Request, tripID api.TripId) error
+	}
+
 	healthHandler interface {
 		Health(w http.ResponseWriter, r *http.Request) error
 		Ready(w http.ResponseWriter, r *http.Request) error
@@ -31,17 +36,18 @@ type (
 )
 
 type Router struct {
-	create createHandler
-	get    getHandler
-	finish finishHandler
-	health healthHandler
-	log    *slog.Logger
+	create    createHandler
+	get       getHandler
+	finish    finishHandler
+	positions positionsHandler
+	health    healthHandler
+	log       *slog.Logger
 }
 
 var _ api.ServerInterface = (*Router)(nil)
 
-func New(create createHandler, get getHandler, finish finishHandler, health healthHandler, log *slog.Logger) *Router {
-	return &Router{create: create, get: get, finish: finish, health: health, log: log}
+func New(create createHandler, get getHandler, finish finishHandler, positions positionsHandler, health healthHandler, log *slog.Logger) *Router {
+	return &Router{create: create, get: get, finish: finish, positions: positions, health: health, log: log}
 }
 
 func (s *Router) CreateTrip(w http.ResponseWriter, r *http.Request, params api.CreateTripParams) {
@@ -54,6 +60,14 @@ func (s *Router) GetTrip(w http.ResponseWriter, r *http.Request, tripID api.Trip
 
 func (s *Router) FinishTrip(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
 	middleware.RespondError(s.log, w, r, s.finish.Handle(w, r, tripID))
+}
+
+func (s *Router) CreateTripPosition(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
+	middleware.RespondError(s.log, w, r, s.positions.Create(w, r, tripID))
+}
+
+func (s *Router) ListTripPositions(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
+	middleware.RespondError(s.log, w, r, s.positions.List(w, r, tripID))
 }
 
 func (s *Router) Health(w http.ResponseWriter, r *http.Request) {

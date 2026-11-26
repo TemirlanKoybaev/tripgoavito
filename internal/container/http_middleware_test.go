@@ -43,7 +43,7 @@ func TestHTTPMiddlewareRecoversPanicWithTrace(t *testing.T) {
 	reader, metrics := newHTTPMetrics(t)
 	var logs bytes.Buffer
 	lg := logger.NewWithWriter(&logs, "info", "trip-service")
-	handler := withHTTPMiddleware(router.New(nil, panickingGet{}, nil, nil, lg).Handler(), metrics, lg)
+	handler := withHTTPMiddleware(router.New(nil, panickingGet{}, nil, nil, nil, lg).Handler(), metrics, lg)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/trips/"+uuid.NewString(), http.NoBody)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)

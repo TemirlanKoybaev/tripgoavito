@@ -180,9 +180,11 @@ func TestRouterTagsInvalidTripID(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/v1/trips/not-a-uuid", routeTemplate},
 		{http.MethodPost, "/api/v1/trips/not-a-uuid/finish", routeTemplate + "/finish"},
+		{http.MethodPost, "/api/v1/trips/not-a-uuid/positions", routeTemplate + "/positions"},
+		{http.MethodGet, "/api/v1/trips/not-a-uuid/positions", routeTemplate + "/positions"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.method, func(t *testing.T) {
+		t.Run(tt.method+" "+tt.template, func(t *testing.T) {
 			exporter := tracetest.NewInMemoryExporter()
 			provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 			prev := otel.GetTracerProvider()
@@ -195,7 +197,7 @@ func TestRouterTagsInvalidTripID(t *testing.T) {
 			reader, metrics := newHTTPMetrics(t)
 			var logs bytes.Buffer
 			lg := logger.NewWithWriter(&logs, "info", "trip-service")
-			handler := withHTTPMiddleware(router.New(nil, nil, nil, nil, lg).Handler(), metrics, lg)
+			handler := withHTTPMiddleware(router.New(nil, nil, nil, nil, nil, lg).Handler(), metrics, lg)
 
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, httptest.NewRequest(tt.method, tt.path, http.NoBody))

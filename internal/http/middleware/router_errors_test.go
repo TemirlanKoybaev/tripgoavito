@@ -60,7 +60,7 @@ func TestRouterReportsOriginal5xxCause(t *testing.T) {
 			t.Cleanup(func() { otel.SetTracerProvider(prev) })
 
 			logger, logs := newTestLogger()
-			handler := router.New(nil, get.New(db), nil, health.New(db, time.Second), logger).Handler()
+			handler := router.New(nil, get.New(db), nil, nil, health.New(db, time.Second), logger).Handler()
 			handler = middleware.Recover(logger)(handler)
 			handler = middleware.Metrics(discardMetrics{})(handler)
 			handler = middleware.Logging(logger)(handler)
@@ -138,7 +138,7 @@ func TestRouterLogsWriteFailureWithoutReplacingResponse(t *testing.T) {
 	for _, logMessage := range []string{requestHandled, "response error"} {
 		t.Run(logMessage, func(t *testing.T) {
 			logger, logs := newTestLogger()
-			handler := router.New(nil, nil, nil, health.New(nil, time.Second), logger).Handler()
+			handler := router.New(nil, nil, nil, nil, health.New(nil, time.Second), logger).Handler()
 			if logMessage == requestHandled {
 				handler = middleware.Logging(logger)(handler)
 			}
