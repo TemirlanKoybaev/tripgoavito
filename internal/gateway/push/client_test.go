@@ -8,11 +8,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/gateway/push"
 )
@@ -200,6 +206,41 @@ func TestRequestPositionClosesRejectedResponse(t *testing.T) {
 	case <-closed:
 	case <-ctx.Done():
 		t.Fatal("client left the response open")
+	}
+}
+
+func TestRequestPositionExportsClientSpan(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
+		_ = provider.Shutdown(context.Background())
+	})
+	header := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header <- r.Header.Get("traceparent")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+	client := newClient(t, server.URL, time.Second)
+	ctx, parent := provider.Tracer("test").Start(t.Context(), "worker")
+	defer parent.End()
+	if err := client.RequestPosition(ctx, uuid.New(), uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("completed client spans = %d, want one", len(spans))
+	}
+	span := spans[0]
+	if span.Name != "push.request_position" || span.SpanKind != trace.SpanKindClient || span.Parent.SpanID() != parent.SpanContext().SpanID() {
+		t.Errorf("unexpected client span: %s, %v, parent %v", span.Name, span.SpanKind, span.Parent)
+	}
+	want := span.SpanContext.TraceID().String() + "-" + span.SpanContext.SpanID().String()
+	if got := <-header; !strings.Contains(got, want) {
+		t.Errorf("traceparent = %q, want it to contain %q", got, want)
 	}
 }
 

@@ -11,13 +11,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 const pushPath = "/api/v1/push"
 
 type Client struct {
-	endpoint string
-	http     *http.Client
+	endpoint  string
+	http      *http.Client
+	transport *http.Transport
 }
 
 type HTTPError struct {
@@ -42,11 +45,16 @@ func New(baseURL *url.URL, timeout time.Duration) (*Client, error) {
 	if timeout <= 0 {
 		return nil, fmt.Errorf("push request timeout must be > 0")
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	return &Client{
-		endpoint: baseURL.JoinPath(pushPath).String(),
+		endpoint:  baseURL.JoinPath(pushPath).String(),
+		transport: transport,
 		http: &http.Client{
-			Transport: http.DefaultTransport.(*http.Transport).Clone(),
-			Timeout:   timeout,
+			Transport: otelhttp.NewTransport(transport,
+				otelhttp.WithMeterProvider(noop.NewMeterProvider()),
+				otelhttp.WithSpanNameFormatter(func(string, *http.Request) string { return "push.request_position" }),
+			),
+			Timeout: timeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -86,5 +94,5 @@ func (c *Client) RequestPosition(ctx context.Context, driverID, tripID uuid.UUID
 }
 
 func (c *Client) CloseIdleConnections() {
-	c.http.CloseIdleConnections()
+	c.transport.CloseIdleConnections()
 }

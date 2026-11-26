@@ -154,3 +154,39 @@ func (mr *MocktxManagerMockRecorder) Do(ctx, fn any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Do", reflect.TypeOf((*MocktxManager)(nil).Do), ctx, fn)
 }
+
+// MockpositionMetrics is a mock of positionMetrics interface.
+type MockpositionMetrics struct {
+	ctrl     *gomock.Controller
+	recorder *MockpositionMetricsMockRecorder
+	isgomock struct{}
+}
+
+// MockpositionMetricsMockRecorder is the mock recorder for MockpositionMetrics.
+type MockpositionMetricsMockRecorder struct {
+	mock *MockpositionMetrics
+}
+
+// NewMockpositionMetrics creates a new mock instance.
+func NewMockpositionMetrics(ctrl *gomock.Controller) *MockpositionMetrics {
+	mock := &MockpositionMetrics{ctrl: ctrl}
+	mock.recorder = &MockpositionMetricsMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockpositionMetrics) EXPECT() *MockpositionMetricsMockRecorder {
+	return m.recorder
+}
+
+// PositionSaved mocks base method.
+func (m *MockpositionMetrics) PositionSaved(ctx context.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "PositionSaved", ctx)
+}
+
+// PositionSaved indicates an expected call of PositionSaved.
+func (mr *MockpositionMetricsMockRecorder) PositionSaved(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PositionSaved", reflect.TypeOf((*MockpositionMetrics)(nil).PositionSaved), ctx)
+}

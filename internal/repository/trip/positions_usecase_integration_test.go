@@ -40,7 +40,7 @@ func TestPositionUseCaseRollsBackOnError(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	wantErr := errors.New("position update failed")
-	u := positions.New(failingPositionUpdate{e.trips, wantErr}, e.tx, time.Now)
+	u := positions.New(failingPositionUpdate{e.trips, wantErr}, e.tx, nil, time.Now)
 	got, err := u.Create(ctx, domain.Position{TripID: tr.ID, RecordedAt: tr.StartedAt})
 	if !errors.Is(err, wantErr) || got != (domain.Position{}) {
 		t.Fatalf("Create() = %+v, %v, want zero position and %v", got, err, wantErr)
@@ -68,7 +68,7 @@ func TestPositionWaitsForConcurrentFinish(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	finishTrip := finish.New(e.trips, e.history, e.tx, discardFinishMetrics{}, slog.New(slog.DiscardHandler))
-	savePosition := positions.New(e.trips, e.tx, time.Now)
+	savePosition := positions.New(e.trips, e.tx, nil, time.Now)
 	saved := make(chan error, 1)
 
 	err := e.tx.Do(ctx, func(txCtx context.Context) error {

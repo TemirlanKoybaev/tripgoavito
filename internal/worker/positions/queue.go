@@ -3,12 +3,15 @@ package positions
 import (
 	"bytes"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
 )
 
 type task struct {
-	trip  trip.StaleTrip
-	index int // -1, когда задача уже не в очереди.
+	trip     trip.StaleTrip
+	scanSpan trace.SpanContext
+	index    int // -1, когда задача уже не в очереди.
 }
 
 type priorityQueue []*task

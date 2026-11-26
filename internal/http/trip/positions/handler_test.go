@@ -55,7 +55,7 @@ func TestPositionEndpoints(t *testing.T) {
 
 func TestPositionRequestValidation(t *testing.T) {
 	// Проверки формы и значений проходят через реальную связку обработчика и usecase.
-	uc := usecase.New(nil, nil, positionTime)
+	uc := usecase.New(nil, nil, nil, positionTime)
 	handler := router.New(nil, nil, nil, positions.New(uc), nil, slog.New(slog.DiscardHandler)).Handler()
 	path := positionsPath(uuid.New())
 	tests := []struct {

@@ -10,13 +10,14 @@ import (
 )
 
 type UseCase struct {
-	trips tripRepository
-	tx    txManager
-	now   func() time.Time
+	trips   tripRepository
+	tx      txManager
+	metrics positionMetrics
+	now     func() time.Time
 }
 
-func New(trips tripRepository, tx txManager, now func() time.Time) *UseCase {
-	return &UseCase{trips: trips, tx: tx, now: now}
+func New(trips tripRepository, tx txManager, metrics positionMetrics, now func() time.Time) *UseCase {
+	return &UseCase{trips: trips, tx: tx, metrics: metrics, now: now}
 }
 
 func (u *UseCase) Create(ctx context.Context, position trip.Position) (trip.Position, error) {
@@ -43,6 +44,7 @@ func (u *UseCase) Create(ctx context.Context, position trip.Position) (trip.Posi
 	if err != nil {
 		return trip.Position{}, err
 	}
+	u.metrics.PositionSaved(ctx)
 	return saved, nil
 }
 

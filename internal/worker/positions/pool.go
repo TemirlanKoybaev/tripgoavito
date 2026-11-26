@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
 )
@@ -28,6 +31,7 @@ type EnqueueResult struct {
 
 type Pool struct {
 	push           pushGateway
+	metrics        poolMetrics
 	requestTimeout time.Duration
 	capacity       int
 	log            *slog.Logger
@@ -39,16 +43,17 @@ type Pool struct {
 	ready  *sync.Cond
 	queue  priorityQueue
 	tasks  map[uuid.UUID]*task
+	active int64
 	closed bool
 }
 
-func NewPool(ctx context.Context, push pushGateway, workers, capacity int, requestTimeout time.Duration, log *slog.Logger) (*Pool, error) {
+func NewPool(ctx context.Context, push pushGateway, metrics poolMetrics, workers, capacity int, requestTimeout time.Duration, log *slog.Logger) (*Pool, error) {
 	if workers < 1 || capacity < 1 || requestTimeout <= 0 {
 		return nil, fmt.Errorf("position workers, queue capacity and request timeout must be positive")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	p := &Pool{
-		push: push, requestTimeout: requestTimeout, capacity: capacity, log: log,
+		push: push, metrics: metrics, requestTimeout: requestTimeout, capacity: capacity, log: log,
 		runCtx: ctx, cancel: cancel, done: make(chan struct{}), tasks: make(map[uuid.UUID]*task),
 	}
 	p.ready = sync.NewCond(&p.mu)
@@ -68,7 +73,7 @@ func NewPool(ctx context.Context, push pushGateway, workers, capacity int, reque
 	return p, nil
 }
 
-func (p *Pool) Enqueue(candidate trip.StaleTrip) EnqueueResult {
+func (p *Pool) Enqueue(ctx context.Context, candidate trip.StaleTrip) EnqueueResult {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed || p.runCtx.Err() != nil {
@@ -87,22 +92,30 @@ func (p *Pool) Enqueue(candidate trip.StaleTrip) EnqueueResult {
 		evicted := latest.trip
 		result.Evicted = &evicted
 	}
-	item := &task{trip: candidate}
+	item := &task{trip: candidate, scanSpan: trace.SpanContextFromContext(ctx)}
 	heap.Push(&p.queue, item)
 	p.tasks[candidate.TripID] = item
 	p.ready.Signal()
 	return result
 }
 
-func (p *Pool) Cancel(tripID uuid.UUID) bool {
+func (p *Pool) Cancel(ctx context.Context, tripID uuid.UUID) bool {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	item := p.tasks[tripID]
 	if item == nil || item.index < 0 {
+		p.mu.Unlock()
 		return false
 	}
 	p.remove(item)
+	p.mu.Unlock()
+	p.metrics.PositionRequest(ctx, "cancelled")
 	return true
+}
+
+func (p *Pool) Stats() (queued, active int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return int64(len(p.queue)), p.active
 }
 
 func (p *Pool) remove(item *task) {
@@ -119,6 +132,7 @@ func (p *Pool) take(ctx context.Context) *task {
 	if len(p.queue) == 0 || ctx.Err() != nil {
 		return nil
 	}
+	p.active++
 	return heap.Pop(&p.queue).(*task)
 }
 
@@ -128,18 +142,35 @@ func (p *Pool) work(ctx context.Context) {
 		if item == nil {
 			return
 		}
-		requestCtx, cancel := context.WithTimeout(ctx, p.requestTimeout)
-		err := p.push.RequestPosition(requestCtx, item.trip.DriverID, item.trip.TripID)
-		cancel()
-		if err != nil {
-			p.log.WarnContext(ctx, "request position failed", slog.String("trip_id", item.trip.TripID.String()), slog.Any("error", err))
-		}
+		p.process(ctx, item)
 		p.mu.Lock()
+		p.active--
 		if p.tasks[item.trip.TripID] == item {
 			delete(p.tasks, item.trip.TripID)
 		}
 		p.mu.Unlock()
 	}
+}
+
+func (p *Pool) process(ctx context.Context, item *task) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "positions.process", trace.WithNewRoot(),
+		trace.WithLinks(trace.Link{SpanContext: item.scanSpan}),
+	)
+	defer span.End()
+	requestCtx, cancel := context.WithTimeout(ctx, p.requestTimeout)
+	defer cancel()
+	started := time.Now()
+	err := p.push.RequestPosition(requestCtx, item.trip.DriverID, item.trip.TripID)
+	duration := time.Since(started)
+	result := "success"
+	if err != nil {
+		result = "error"
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "push request failed")
+		p.log.WarnContext(ctx, "request position failed", slog.String("trip_id", item.trip.TripID.String()), slog.Any("error", err))
+	}
+	p.metrics.PositionRequest(ctx, result)
+	p.metrics.RecordPositionRequestDuration(ctx, duration, result)
 }
 
 // Shutdown закрывает приём и даёт воркерам разобрать очередь до дедлайна.

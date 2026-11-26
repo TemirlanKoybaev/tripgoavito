@@ -20,6 +20,7 @@ type Metrics struct {
 	dbDuration      metric.Float64Histogram
 	tripsCreated    metric.Int64Counter
 	tripsCompleted  metric.Int64Counter
+	positions       positionInstruments
 }
 
 func NewMetrics(meter metric.Meter) (*Metrics, error) {
@@ -64,6 +65,10 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tripgo.trips.completed: %w", err)
 	}
+	positions, err := newPositionInstruments(meter)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Metrics{
 		meter:           meter,
@@ -72,6 +77,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		dbDuration:      dbDuration,
 		tripsCreated:    tripsCreated,
 		tripsCompleted:  tripsCompleted,
+		positions:       positions,
 	}, nil
 }
 

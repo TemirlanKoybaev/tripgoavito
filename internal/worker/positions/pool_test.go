@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/metric/noop"
 	"go.uber.org/goleak"
 	"go.uber.org/mock/gomock"
 
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/domain/trip"
+	"github.com/TemirlanKoybaev/tripgoavito.git/internal/infra/telemetry"
 	"github.com/TemirlanKoybaev/tripgoavito.git/internal/worker/positions"
 )
 
@@ -45,11 +47,11 @@ func TestPoolPrioritizesAndEvictsAcrossEnqueues(t *testing.T) {
 	for _, trip := range []trip.StaleTrip{freshest, secondTie, firstTie} {
 		enqueue(t, pool, trip, positions.Queued)
 	}
-	result := pool.Enqueue(older)
+	result := pool.Enqueue(t.Context(), older)
 	if result.Status != positions.Queued || result.Evicted == nil || *result.Evicted != freshest {
 		t.Fatalf("enqueue older trip = %+v, want freshest trip evicted", result)
 	}
-	if pool.Cancel(freshest.TripID) {
+	if pool.Cancel(t.Context(), freshest.TripID) {
 		t.Fatal("evicted trip was still pending")
 	}
 	enqueue(t, pool, candidate(6, 10), positions.Dropped)
@@ -80,13 +82,13 @@ func TestPoolCancelsPendingAndDeduplicatesInFlight(t *testing.T) {
 		t.Fatalf("started trip = %s, want %s", got, gate.TripID)
 	}
 	enqueue(t, pool, gate, positions.Duplicate)
-	if pool.Cancel(gate.TripID) {
+	if pool.Cancel(t.Context(), gate.TripID) {
 		t.Fatal("cancel removed an in-flight task")
 	}
 	enqueue(t, pool, waiting, positions.Queued)
 	enqueue(t, pool, waiting, positions.Duplicate)
 	enqueue(t, pool, discarded, positions.Queued)
-	if !pool.Cancel(waiting.TripID) || !pool.Cancel(discarded.TripID) || pool.Cancel(discarded.TripID) {
+	if !pool.Cancel(t.Context(), waiting.TripID) || !pool.Cancel(t.Context(), discarded.TripID) || pool.Cancel(t.Context(), discarded.TripID) {
 		t.Fatal("expected cancellation to remove each queued trip once")
 	}
 	waiting.EffectiveAt = waiting.EffectiveAt.Add(time.Minute)
@@ -181,9 +183,18 @@ func TestPoolShutdownDeadlineCancelsRequestAndDropsWaiting(t *testing.T) {
 
 func newTestPool(t *testing.T, workers, capacity int, timeout time.Duration, send func(context.Context, uuid.UUID, uuid.UUID) error) *positions.Pool {
 	t.Helper()
+	metrics, err := telemetry.NewMetrics(noop.NewMeterProvider().Meter("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return startTestPool(t, workers, capacity, timeout, metrics, send)
+}
+
+func startTestPool(t *testing.T, workers, capacity int, timeout time.Duration, metrics *telemetry.Metrics, send func(context.Context, uuid.UUID, uuid.UUID) error) *positions.Pool {
+	t.Helper()
 	gateway := NewMockpushGateway(gomock.NewController(t))
 	gateway.EXPECT().RequestPosition(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(send).AnyTimes()
-	pool, err := positions.NewPool(t.Context(), gateway, workers, capacity, timeout, slog.New(slog.DiscardHandler))
+	pool, err := positions.NewPool(t.Context(), gateway, metrics, workers, capacity, timeout, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("NewPool: %v", err)
 	}
@@ -197,7 +208,7 @@ func candidate(id byte, age int) trip.StaleTrip {
 
 func enqueue(t *testing.T, pool *positions.Pool, trip trip.StaleTrip, want positions.EnqueueStatus) {
 	t.Helper()
-	if got := pool.Enqueue(trip); got.Status != want || got.Evicted != nil {
+	if got := pool.Enqueue(t.Context(), trip); got.Status != want || got.Evicted != nil {
 		t.Fatalf("Enqueue(%s) = %+v, want %s with no eviction", trip.TripID, got, want)
 	}
 }

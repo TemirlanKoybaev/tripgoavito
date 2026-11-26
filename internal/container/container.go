@@ -78,7 +78,7 @@ func New(ctx context.Context, cfg *config.Config, lg *slog.Logger) (*Container, 
 	createHandler := createhttp.New(createuc.New(trips, history, txManager, metrics, lg))
 	getHandler := gethttp.New(getuc.New(trips))
 	finishHandler := finishhttp.New(finishuc.New(trips, history, txManager, metrics, lg))
-	positionsHandler := positionshttp.New(positionsuc.New(trips, txManager, time.Now))
+	positionsHandler := positionshttp.New(positionsuc.New(trips, txManager, metrics, time.Now))
 	healthHandler := health.New(pool, cfg.DatabaseQueryTimeout)
 
 	handler := router.New(createHandler, getHandler, finishHandler, positionsHandler, healthHandler, lg).Handler()
