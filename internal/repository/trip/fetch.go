@@ -17,7 +17,7 @@ var tripColumns = []string{
 	"id", "user_id", "driver_id",
 	"start_latitude", "start_longitude",
 	"end_latitude", "end_longitude",
-	"price", "status", "started_at", "finished_at",
+	"price", "status", "started_at", "finished_at", "last_position_at",
 }
 
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Trip, error) {
@@ -47,7 +47,7 @@ func (r *Repository) fetch(ctx context.Context, id uuid.UUID, forUpdate bool) (*
 		&t.ID, &t.UserID, &t.DriverID,
 		&t.StartLatitude, &t.StartLongitude,
 		&t.EndLatitude, &t.EndLongitude,
-		&t.Price, &t.Status, &t.StartedAt, &t.FinishedAt,
+		&t.Price, &t.Status, &t.StartedAt, &t.FinishedAt, &t.LastPositionAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrTripNotFound
@@ -60,6 +60,10 @@ func (r *Repository) fetch(ctx context.Context, id uuid.UUID, forUpdate bool) (*
 	if t.FinishedAt != nil {
 		finishedAt := t.FinishedAt.UTC()
 		t.FinishedAt = &finishedAt
+	}
+	if t.LastPositionAt != nil {
+		lastPositionAt := t.LastPositionAt.UTC()
+		t.LastPositionAt = &lastPositionAt
 	}
 	return &t, nil
 }
