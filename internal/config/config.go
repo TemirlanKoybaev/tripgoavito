@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -24,6 +25,14 @@ type Config struct {
 	DatabaseMaxConnLifetime time.Duration
 	DatabaseConnectTimeout  time.Duration
 	DatabaseQueryTimeout    time.Duration
+
+	PositionCheckInterval time.Duration
+	PositionStaleAfter    time.Duration
+	PositionWorkers       int
+	PositionQueueSize     int
+	PositionScanBatchSize int
+	PushHTTPURL           *url.URL
+	PushRequestTimeout    time.Duration
 }
 
 func Load() (*Config, error) {
@@ -52,6 +61,9 @@ func Load() (*Config, error) {
 		{"DATABASE_MAX_CONN_LIFETIME", "30m", &cfg.DatabaseMaxConnLifetime},
 		{"DATABASE_CONNECT_TIMEOUT", "5s", &cfg.DatabaseConnectTimeout},
 		{"DATABASE_QUERY_TIMEOUT", "3s", &cfg.DatabaseQueryTimeout},
+		{"POSITION_CHECK_INTERVAL", "30s", &cfg.PositionCheckInterval},
+		{"POSITION_STALE_AFTER", "60s", &cfg.PositionStaleAfter},
+		{"PUSH_REQUEST_TIMEOUT", "1s", &cfg.PushRequestTimeout},
 	}
 	for _, d := range durations {
 		v, err := parseDuration(d.key, d.def)
@@ -80,6 +92,35 @@ func Load() (*Config, error) {
 	if cfg.DatabaseMinConns > cfg.DatabaseMaxConns {
 		return nil, fmt.Errorf("DATABASE_MIN_CONNS (%d) must not exceed DATABASE_MAX_CONNS (%d)",
 			cfg.DatabaseMinConns, cfg.DatabaseMaxConns)
+	}
+
+	counts := []struct {
+		key string
+		def string
+		dst *int
+	}{
+		{"POSITION_WORKERS", "4", &cfg.PositionWorkers},
+		{"POSITION_QUEUE_SIZE", "100", &cfg.PositionQueueSize},
+		{"POSITION_SCAN_BATCH_SIZE", "100", &cfg.PositionScanBatchSize},
+	}
+	for _, c := range counts {
+		n, err := strconv.Atoi(getEnv(c.key, c.def))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", c.key, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("%s must be > 0", c.key)
+		}
+		*c.dst = n
+	}
+
+	// Окружение ЛР №2 ещё запускается без фонового опроса и адреса Push Service.
+	if raw := os.Getenv("PUSH_HTTP_URL"); raw != "" {
+		endpoint, err := url.Parse(raw)
+		if err != nil || endpoint.Hostname() == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+			return nil, fmt.Errorf("PUSH_HTTP_URL must be an absolute HTTP or HTTPS URL")
+		}
+		cfg.PushHTTPURL = endpoint
 	}
 
 	return cfg, nil
